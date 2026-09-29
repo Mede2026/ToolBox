@@ -52,7 +52,7 @@ jobs:
           key: deps-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Configurer
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOOLBOX_VERSION=${{ steps.ver.outputs.version }}
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DTOOLBOX_VERSION=${{ steps.ver.outputs.version }}"
 
       - name: Compiler
         run: cmake --build build --config Release
