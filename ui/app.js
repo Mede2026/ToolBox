@@ -418,10 +418,10 @@ const HomePage = {
     </div>
 
     <h2 class="home-section">Accès rapide</h2>
-    <div class="grid grid-3">
+    <div class="grid home-grid">
       ${this.card('converter', 'convert', 'Convertir', `
-        <input type="text" id="qc" placeholder="Ex. : 10 km en mi · 25 c en f · 20 cad en usd" value="${esc(qcValue)}">
-        <div class="qc-out" id="qc-out">${quickConvert(qcValue) || '<span class="faint">Tape une valeur, une unité, « en », puis l\'autre unité.</span>'}</div>`)}
+        <input type="text" id="qc" placeholder="Ex. : 10 km en mi" value="${esc(qcValue)}">
+        <div class="qc-out" id="qc-out">${quickConvert(qcValue) || '<span class="faint qc-hint">Aussi : 25 c en f · 20 cad en usd · 3 h en min</span>'}</div>`)}
       ${this.card('clipboard', 'clipboard', 'Presse-papiers', this.clipBody())}
       ${this.card('app_launcher', 'apps', "Raccourcis d'apps", this.appsBody())}
       ${this.card('processes', 'cpu', 'Programmes', this.procBody())}
@@ -430,7 +430,7 @@ const HomePage = {
     </div>
 
     <h2 class="home-section">Toutes les fonctions</h2>
-    <div class="grid grid-3">${S.order.map(id => {
+    <div class="grid home-grid">${S.order.map(id => {
       const m = S.modules[id];
       const def = PAGES.find(p => p.module === id) || {};
       return `<div class="card tight home-tile${m.enabled ? '' : ' off'}" data-go="${def.id}">
@@ -446,8 +446,8 @@ const HomePage = {
         <div class="faint">Fonction désactivée.</div>
         <div><button class="btn" data-toggle-module="${id}" data-value="1">Activer</button></div></div>`;
     }
-    return `<div class="card home-card"><div class="home-card-head">${icon(ic)}<h3>${esc(title)}</h3><span class="spacer"></span>
-      <button class="btn ghost small-btn" data-go="${def.id}">Ouvrir →</button></div>${body}</div>`;
+    return `<div class="card home-card"><div class="home-card-head">${icon(ic)}<h3 title="${esc(title)}">${esc(title)}</h3>
+      <button class="btn ghost icon-only open-btn" data-go="${def.id}" title="Ouvrir ${esc(title)}">→</button></div>${body}</div>`;
   },
   clipBody() {
     const s = modState('clipboard');
@@ -491,7 +491,7 @@ const HomePage = {
   },
   bind(root) {
     const qc = $('#qc', root);
-    qc?.addEventListener('input', () => { qcValue = qc.value; $('#qc-out').innerHTML = quickConvert(qcValue) || '<span class="faint">…</span>'; });
+    qc?.addEventListener('input', () => { qcValue = qc.value; $('#qc-out').innerHTML = quickConvert(qcValue) || '<span class="faint qc-hint">Ex. : 10 km en mi · 25 c en f</span>'; });
     root.addEventListener('click', e => {
       const clip = e.target.closest('[data-clip-id]');
       if (clip) { moduleAction('clipboard', 'copy', { id: +clip.dataset.clipId }); toast('Copié !'); }
