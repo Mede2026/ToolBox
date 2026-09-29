@@ -4,6 +4,7 @@
 #include <winhttp.h>
 
 #include <array>
+#include <cstring>
 #include <cctype>
 #include <chrono>
 #include <filesystem>

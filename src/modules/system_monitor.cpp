@@ -1,6 +1,7 @@
 #include "modules/system_monitor.h"
 
 #include <winsock2.h>
+#include <ws2ipdef.h>
 #include <iphlpapi.h>
 #include <netioapi.h>
 

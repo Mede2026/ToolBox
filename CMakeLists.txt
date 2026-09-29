@@ -82,7 +82,7 @@ target_include_directories(ToolBox PRIVATE
 
 target_compile_definitions(ToolBox PRIVATE
   UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
-target_compile_options(ToolBox PRIVATE /W4 /utf-8 /permissive-)
+target_compile_options(ToolBox PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /utf-8 /permissive- /EHsc>)
 
 target_link_libraries(ToolBox PRIVATE
   ${WEBVIEW2_DIR}/build/native/x64/WebView2LoaderStatic.lib

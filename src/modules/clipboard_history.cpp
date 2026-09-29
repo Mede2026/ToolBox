@@ -1,6 +1,7 @@
 #include "modules/clipboard_history.h"
 
 #include <algorithm>
+#include <cstring>
 #include <chrono>
 
 #include "util.h"

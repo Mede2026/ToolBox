@@ -1,4 +1,4 @@
-#include <winres.h>
+#include <winresrc.h>
 #include "resource_ids.h"
 
 IDI_APP     ICON   "@CMAKE_SOURCE_DIR@/res/toolbox.ico"

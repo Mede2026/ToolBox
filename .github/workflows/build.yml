@@ -57,6 +57,11 @@ jobs:
       - name: Compiler
         run: cmake --build build --config Release
 
+      - name: Diagnostic (en cas d'échec)
+        if: failure()
+        shell: pwsh
+        run: Get-Content build/generated/toolbox.rc -ErrorAction SilentlyContinue | Select-Object -First 12
+
       - name: Préparer les fichiers
         shell: pwsh
         run: |
