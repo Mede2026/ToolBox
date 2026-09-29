@@ -4,17 +4,19 @@ Petite app Windows pleine de fonctions utiles au quotidien : **moteur en C++** (
 
 ## Fonctions
 
-Chaque fonction peut être **activée ou désactivée** depuis la barre latérale.
+Chaque fonction peut être **activée ou désactivée** depuis la barre latérale, sauf le Moniteur et le Convertisseur, qui sont toujours actifs.
 
 | Fonction | Ce qu'elle fait |
 |---|---|
-| **Moniteur** | Processeur, mémoire, disque, batterie et réseau en direct, avec des jauges rondes |
+| **Moniteur** *(toujours actif)* | Processeur, mémoire, disque, batterie et réseau en direct, avec des jauges rondes |
+| **Convertisseur** *(toujours actif)* | Longueur, masse, température, volume, vitesse, aire, données, temps et devises |
 | **Programmes** | Arrête les programmes inutiles (★ + « Mode léger ») et les relance d'un clic |
 | **Garde Enter** | Efface la touche voisine d'Enter (`à`, `\`, `#`…) frappée par accident, même si Enter est déjà pressé |
-| **Presse-papiers** | Historique de tout ce qui est copié ; les mots de passe des gestionnaires sont ignorés |
-| **Convertisseur** | Longueur, masse, température, volume, vitesse, aire, données, temps et devises |
+| **Presse-papiers** | Historique de tout ce qui est copié + **fenêtre rapide** ouverte par un raccourci au choix (Ctrl + Alt + V par défaut) qui colle l'élément choisi ; les mots de passe des gestionnaires sont ignorés |
 | **Raccourcis d'apps** | Groupes d'apps, de fichiers ou de sites à lancer d'un seul clic |
-| **Lancement par lieu** | Ouvre un fichier ou une app quand tu arrives quelque part (Wi-Fi et/ou GPS) |
+| **Lancement par lieu** | Ouvre une ou plusieurs apps quand tu arrives quelque part (Wi-Fi et/ou GPS) |
+
+L'accueil regroupe les jauges, un convertisseur rapide (« 10 km en mi ») et des raccourcis vers chaque fonction.
 
 Autres fonctions : recherche des fonctions (`Ctrl+F`), démarrage avec Windows, icône près de l'horloge, **mises à jour automatiques**.
 

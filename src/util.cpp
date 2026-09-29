@@ -1,6 +1,9 @@
 #include "util.h"
 
 #include <shlobj.h>
+#define SECURITY_WIN32
+#include <security.h>
+#include <secext.h>
 
 #include <algorithm>
 #include <cwctype>
@@ -68,6 +71,21 @@ std::wstring ForegroundProcessName() {
     name = ToLower(std::filesystem::path(path).filename().wstring());
   }
   CloseHandle(proc);
+  return name;
+}
+
+std::wstring UserFirstName() {
+  wchar_t buf[256];
+  ULONG size = 256;
+  std::wstring name;
+  // Nom affiché du compte (compte Microsoft : « Prénom Nom »), sinon le nom d'utilisateur.
+  if (GetUserNameExW(NameDisplay, buf, &size) && size > 0) {
+    name.assign(buf, size);
+  } else {
+    DWORD n = 256;
+    if (GetUserNameW(buf, &n) && n > 1) name.assign(buf, n - 1);
+  }
+  if (auto sp = name.find(L' '); sp != std::wstring::npos) name.resize(sp);
   return name;
 }
 

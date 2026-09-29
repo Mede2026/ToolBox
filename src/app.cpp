@@ -3,6 +3,7 @@
 #include <dwmapi.h>
 #include <shobjidl.h>
 
+#include <algorithm>
 #include <string>
 
 #include "modules/app_launcher.h"
@@ -79,12 +80,15 @@ void App::CreateModules() {
   // Peut être appelé depuis un autre fil (ex. GPS) : PostMessage est sûr.
   auto push = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_PUSH_STATE, 0, 0); };
 
+  auto clip_popup = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_CLIP_POPUP, 0, 0); };
+
   // ---- Liste des fonctions (ordre = ordre dans le menu) : ajouter les nouveaux modules ici ----
+  // Les fonctions toujours actives d'abord.
   modules_.push_back(std::make_unique<SystemMonitor>());
+  modules_.push_back(std::make_unique<UiModule>("converter", "Convertisseur", "Unités et devises.", /*always_on=*/true));
   modules_.push_back(std::make_unique<ProcessManager>());
   modules_.push_back(std::make_unique<EnterGuard>(push));
-  modules_.push_back(std::make_unique<ClipboardHistory>(hwnd_, push));
-  modules_.push_back(std::make_unique<UiModule>("converter", "Convertisseur", "Unités et devises."));
+  modules_.push_back(std::make_unique<ClipboardHistory>(hwnd_, push, clip_popup));
   modules_.push_back(std::make_unique<AppLauncher>());
   modules_.push_back(std::make_unique<PlaceLauncher>(push));
 
@@ -215,6 +219,8 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
       KillTimer(hwnd_, kTimerUpdate);
       KillTimer(hwnd_, kTimerLive);
       for (auto& m : modules_) m->Stop();
+      if (popup_controller_) popup_controller_->Close();
+      if (popup_hwnd_) DestroyWindow(popup_hwnd_);
       if (controller_) controller_->Close();
       PostQuitMessage(0);
       return 0;
@@ -238,7 +244,12 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_CLIPBOARDUPDATE:
+    case WM_HOTKEY:
       for (auto& m : modules_) m->OnWindowMessage(msg, wparam, lparam);
+      return 0;
+
+    case WM_APP_CLIP_POPUP:
+      ShowClipboardPopup();
       return 0;
 
     case WM_APP_SHOW:
@@ -285,6 +296,7 @@ void App::InitWebView() {
       Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
           [this](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
             if (FAILED(result) || !env) return result;
+            env_ = env;
             return env->CreateCoreWebView2Controller(
                 hwnd_, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
                            [this](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
@@ -368,8 +380,9 @@ void App::ResizeWebView() {
 }
 
 void App::PostToUi(const json& msg) {
-  if (!webview_) return;
-  webview_->PostWebMessageAsJson(util::FromUtf8(msg.dump()).c_str());
+  const std::wstring text = util::FromUtf8(msg.dump());
+  if (webview_) webview_->PostWebMessageAsJson(text.c_str());
+  if (popup_webview_ && msg.value("type", "") != "live") popup_webview_->PostWebMessageAsJson(text.c_str());
 }
 
 void App::PushState() {
@@ -394,7 +407,8 @@ void App::PushState() {
         {"startWithWindows", settings_.Get(r, "startWithWindows", false)},
         {"minimizeToTray", settings_.Get(r, "minimizeToTray", true)},
         {"autoUpdate", settings_.Get(r, "autoUpdate", true)},
-        {"dataDir", util::ToUtf8(util::DataDir().wstring())}}},
+        {"dataDir", util::ToUtf8(util::DataDir().wstring())},
+        {"userName", util::ToUtf8(util::UserFirstName())}}},
       {"modules", modules},
       {"update", updater_->State()},
   });
@@ -537,6 +551,169 @@ void App::ShowTrayMenu() {
   TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd_, nullptr);
   PostMessageW(hwnd_, WM_NULL, 0, 0);
   DestroyMenu(menu);
+}
+
+// ---------------------------------------------------------------- Fenêtre « presse-papiers »
+
+void App::ShowClipboardPopup() {
+  if (!env_) return;
+  auto* clip = static_cast<ClipboardHistory*>(FindModule("clipboard"));
+  if (!clip || !clip->Running()) return;
+
+  const HWND fg = GetForegroundWindow();
+  if (fg != popup_hwnd_) prev_foreground_ = fg;
+
+  const UINT dpi = GetDpiForSystem();
+  const int w = MulDiv(400, dpi, 96), h = MulDiv(500, dpi, 96);
+
+  if (!popup_hwnd_) {
+    WNDCLASSEXW wc{sizeof(wc)};
+    wc.lpfnWndProc = PopupProc;
+    wc.hInstance = instance_;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = CreateSolidBrush(RGB(32, 32, 32));
+    wc.lpszClassName = kPopupClass;
+    RegisterClassExW(&wc);
+    popup_hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kPopupClass, L"Presse-papiers", WS_POPUP | WS_BORDER,
+                                  0, 0, w, h, nullptr, nullptr, instance_, this);
+    const int round = 2;  // DWMWCP_ROUND : coins arrondis sous Windows 11
+    DwmSetWindowAttribute(popup_hwnd_, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &round, sizeof(round));
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(popup_hwnd_, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &dark, sizeof(dark));
+    CreatePopupWebView();
+  }
+
+  // Près de la souris, sans dépasser de l'écran.
+  POINT pt;
+  GetCursorPos(&pt);
+  MONITORINFO mi{sizeof(mi)};
+  GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi);
+  const RECT& wa = mi.rcWork;
+  const int x = std::max<int>(wa.left, std::min<int>(pt.x - w / 2, wa.right - w));
+  const int y = std::max<int>(wa.top, std::min<int>(pt.y - MulDiv(40, dpi, 96), wa.bottom - h));
+  SetWindowPos(popup_hwnd_, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW);
+  SetForegroundWindow(popup_hwnd_);
+  if (popup_controller_) {
+    popup_controller_->put_IsVisible(TRUE);
+    popup_controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+  }
+  PushState();
+  if (popup_webview_) popup_webview_->PostWebMessageAsJson(L"{\"type\":\"popupShown\"}");
+}
+
+void App::HidePopup() {
+  if (!popup_hwnd_ || !IsWindowVisible(popup_hwnd_)) return;
+  ShowWindow(popup_hwnd_, SW_HIDE);
+}
+
+void App::CreatePopupWebView() {
+  env_->CreateCoreWebView2Controller(
+      popup_hwnd_,
+      Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+          [this](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
+            if (FAILED(result) || !controller) return result;
+            popup_controller_ = controller;
+            popup_controller_->get_CoreWebView2(&popup_webview_);
+            ComPtr<ICoreWebView2Controller2> c2;
+            if (SUCCEEDED(popup_controller_.As(&c2))) c2->put_DefaultBackgroundColor({255, 32, 32, 32});
+            ComPtr<ICoreWebView2Settings> s;
+            popup_webview_->get_Settings(&s);
+            s->put_IsStatusBarEnabled(FALSE);
+            s->put_IsZoomControlEnabled(FALSE);
+#ifdef NDEBUG
+            s->put_AreDevToolsEnabled(FALSE);
+            s->put_AreDefaultContextMenusEnabled(FALSE);
+#endif
+            popup_webview_->AddScriptToExecuteOnDocumentCreated(L"window.TOOLBOX_POPUP = true;", nullptr);
+            popup_webview_->add_WebMessageReceived(
+                Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                    [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
+                      LPWSTR raw = nullptr;
+                      if (SUCCEEDED(args->get_WebMessageAsJson(&raw)) && raw) {
+                        json msg = json::parse(util::ToUtf8(raw), nullptr, false);
+                        CoTaskMemFree(raw);
+                        if (msg.is_object()) OnPopupMessage(msg);
+                      }
+                      return S_OK;
+                    })
+                    .Get(),
+                nullptr);
+            RECT bounds;
+            GetClientRect(popup_hwnd_, &bounds);
+            popup_controller_->put_Bounds(bounds);
+            popup_controller_->put_IsVisible(IsWindowVisible(popup_hwnd_));
+            popup_controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+            popup_webview_->NavigateToString(LoadUiHtml(instance_).c_str());
+            return S_OK;
+          })
+          .Get());
+}
+
+void App::OnPopupMessage(const json& msg) {
+  const std::string type = msg.value("type", "");
+  if (type == "popupClose") {
+    HidePopup();
+    if (prev_foreground_) SetForegroundWindow(prev_foreground_);
+  } else if (type == "clipPaste") {
+    auto* clip = static_cast<ClipboardHistory*>(FindModule("clipboard"));
+    if (!clip || !clip->CopyItem(msg.value("id", 0ULL))) return;
+    popup_pasting_ = true;
+    HidePopup();
+    popup_pasting_ = false;
+    if (prev_foreground_) SetForegroundWindow(prev_foreground_);
+    // Petit délai : la fenêtre d'origine doit reprendre le focus avant le Ctrl + V.
+    if (clip->AutoPaste()) SetTimer(popup_hwnd_, 1, 80, nullptr);
+  } else if (type == "openMain") {
+    HidePopup();
+    ShowMainWindow();
+  } else {
+    OnWebMessage(msg);  // "ready", "moduleAction" (épingler, supprimer)…
+  }
+}
+
+void App::PasteIntoPreviousWindow() {
+  INPUT in[4] = {};
+  for (auto& i : in) i.type = INPUT_KEYBOARD;
+  in[0].ki.wVk = VK_CONTROL;
+  in[1].ki.wVk = 'V';
+  in[2].ki.wVk = 'V';
+  in[2].ki.dwFlags = KEYEVENTF_KEYUP;
+  in[3].ki.wVk = VK_CONTROL;
+  in[3].ki.dwFlags = KEYEVENTF_KEYUP;
+  SendInput(4, in, sizeof(INPUT));
+}
+
+LRESULT CALLBACK App::PopupProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+  App* self = nullptr;
+  if (msg == WM_NCCREATE) {
+    self = static_cast<App*>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
+    SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+  } else {
+    self = reinterpret_cast<App*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+  }
+  if (self) {
+    switch (msg) {
+      case WM_ACTIVATE:
+        // Clic ailleurs : on ferme, comme le menu Win + V.
+        if (LOWORD(wparam) == WA_INACTIVE && !self->popup_pasting_) ShowWindow(hwnd, SW_HIDE);
+        return 0;
+      case WM_SIZE:
+        if (self->popup_controller_) {
+          RECT r;
+          GetClientRect(hwnd, &r);
+          self->popup_controller_->put_Bounds(r);
+        }
+        return 0;
+      case WM_TIMER:
+        KillTimer(hwnd, wparam);
+        self->PasteIntoPreviousWindow();
+        return 0;
+      case WM_CLOSE:
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+    }
+  }
+  return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
 // ---------------------------------------------------------------- Démarrage / mises à jour

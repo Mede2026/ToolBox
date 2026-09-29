@@ -15,6 +15,7 @@
 #include "updater.h"
 
 inline constexpr wchar_t kWindowClass[] = L"ToolBoxMainWindow";
+inline constexpr wchar_t kPopupClass[] = L"ToolBoxClipboardPopup";
 
 // Messages internes de la fenêtre principale.
 enum : UINT {
@@ -22,6 +23,7 @@ enum : UINT {
   WM_APP_PUSH_STATE,              // un module a changé -> renvoyer l'état à l'interface
   WM_APP_UPDATE,                  // l'updater a changé d'état
   WM_APP_SHOW,                    // une 2e instance demande d'afficher la fenêtre
+  WM_APP_CLIP_POPUP,              // raccourci du presse-papiers pressé
 };
 
 class App {
@@ -57,6 +59,14 @@ class App {
   Module* FindModule(const std::string& id);
   bool ModuleEnabled(const std::string& id);
 
+  // Petite fenêtre de l'historique du presse-papiers (ouverte par raccourci clavier)
+  static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+  void ShowClipboardPopup();
+  void HidePopup();
+  void CreatePopupWebView();
+  void OnPopupMessage(const nlohmann::json& msg);
+  void PasteIntoPreviousWindow();
+
   void ApplyStartWithWindows();
   void MaybeAutoUpdate();
   void RestartForUpdate();
@@ -69,6 +79,13 @@ class App {
 
   Microsoft::WRL::ComPtr<ICoreWebView2Controller> controller_;
   Microsoft::WRL::ComPtr<ICoreWebView2> webview_;
+  Microsoft::WRL::ComPtr<ICoreWebView2Environment> env_;
+
+  HWND popup_hwnd_ = nullptr;
+  HWND prev_foreground_ = nullptr;
+  bool popup_pasting_ = false;
+  Microsoft::WRL::ComPtr<ICoreWebView2Controller> popup_controller_;
+  Microsoft::WRL::ComPtr<ICoreWebView2> popup_webview_;
 
   Settings settings_;
   std::vector<std::unique_ptr<Module>> modules_;

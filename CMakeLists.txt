@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Version : la GitHub Action la remplace par celle du tag (ex. v0.2.0 -> 0.2.0).
-set(TOOLBOX_VERSION "0.1.0" CACHE STRING "Version de ToolBox")
+set(TOOLBOX_VERSION "0.2.0" CACHE STRING "Version de ToolBox")
 
 project(ToolBox VERSION ${TOOLBOX_VERSION} LANGUAGES CXX RC)
 
@@ -87,7 +87,7 @@ target_compile_options(ToolBox PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /utf-8 /per
 target_link_libraries(ToolBox PRIVATE
   ${WEBVIEW2_DIR}/build/native/x64/WebView2LoaderStatic.lib
   winhttp bcrypt dwmapi shell32 shlwapi advapi32 user32 ole32 comctl32 version
-  wlanapi iphlpapi windowsapp)
+  wlanapi iphlpapi windowsapp secur32)
 
 set_target_properties(ToolBox PROPERTIES
   LINK_FLAGS "/MANIFESTUAC:\"level='asInvoker' uiAccess='false'\"")

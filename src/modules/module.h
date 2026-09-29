@@ -48,8 +48,8 @@ class Module {
 // Module sans travail en arrière-plan : toute la logique est dans l'interface (ex. Convertisseur).
 class UiModule : public Module {
  public:
-  UiModule(std::string id, std::string name, std::string description)
-      : id_(std::move(id)), name_(std::move(name)), description_(std::move(description)) {}
+  UiModule(std::string id, std::string name, std::string description, bool always_on = false)
+      : id_(std::move(id)), name_(std::move(name)), description_(std::move(description)), always_on_(always_on) {}
 
   std::string Id() const override { return id_; }
   std::string Name() const override { return name_; }
@@ -57,6 +57,7 @@ class UiModule : public Module {
   void Start() override { running_ = true; }
   void Stop() override { running_ = false; }
   bool Running() const override { return running_; }
+  bool AlwaysOn() const override { return always_on_; }
   void LoadConfig(const nlohmann::json& cfg) override { config_ = cfg; config_.erase("enabled"); }
   nlohmann::json SaveConfig() const override { return config_; }
   nlohmann::json State() const override { return config_; }
@@ -69,6 +70,7 @@ class UiModule : public Module {
 
  private:
   std::string id_, name_, description_;
+  bool always_on_ = false;
   bool running_ = false;
   nlohmann::json config_ = nlohmann::json::object();
 };

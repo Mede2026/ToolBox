@@ -142,6 +142,9 @@ function receive(msg) {
       if (currentId === 'updates' || currentId === 'home') renderPage(true);
       renderNav();
       break;
+    case 'popupShown':
+      Popup.shown();
+      break;
     case 'filePicked': {
       const resolve = pendingPicks.get(msg.requestId);
       pendingPicks.delete(msg.requestId);
@@ -156,11 +159,13 @@ function push(arr, v) { arr.push(v); if (arr.length > 90) arr.shift(); }
 
 const PAGES = [
   { id: 'home', label: 'Accueil', icon: 'home', keys: 'accueil resume', page: () => HomePage },
+  // Toujours actives (pas d'interrupteur)
   { id: 'monitor', label: 'Moniteur', icon: 'monitor', module: 'monitor', keys: 'cpu processeur ram memoire disque batterie reseau internet vitesse', page: () => MonitorPage },
+  { id: 'converter', label: 'Convertisseur', icon: 'convert', module: 'converter', keys: 'unites devises argent dollar euro temperature longueur masse', page: () => ConverterPage },
+  { sep: true },
   { id: 'processes', label: 'Programmes', icon: 'cpu', module: 'processes', keys: 'taches tuer fermer arreter relancer ressources lent mode leger', page: () => ProcessesPage },
   { id: 'enter_guard', label: 'Garde Enter', icon: 'keyboard', module: 'enter_guard', keys: 'a clavier touche accident entree faute', page: () => EnterGuardPage },
   { id: 'clipboard', label: 'Presse-papiers', icon: 'clipboard', module: 'clipboard', keys: 'copier coller ctrl c v historique texte', page: () => ClipboardPage },
-  { id: 'converter', label: 'Convertisseur', icon: 'convert', module: 'converter', keys: 'unites devises argent dollar euro temperature longueur masse', page: () => ConverterPage },
   { id: 'app_launcher', label: "Raccourcis d'apps", icon: 'apps', module: 'app_launcher', keys: 'lancer groupe raccourci ouvrir apps', page: () => AppLauncherPage },
   { id: 'place_launcher', label: 'Lancement par lieu', icon: 'place', module: 'place_launcher', keys: 'gps wifi maison ecole lieu adresse position', page: () => PlacePage },
   { sep: true },
@@ -173,6 +178,7 @@ let currentId = (() => { try { return localStorage.getItem('page') || 'home'; } 
 let current = {};
 
 function go(id) {
+  if (hotkeyCapturing) stopHotkeyCapture(true);
   currentId = id;
   try { localStorage.setItem('page', id); } catch { /* ignore */ }
   renderNav();
@@ -220,6 +226,7 @@ document.addEventListener('keydown', e => {
 });
 
 function onState() {
+  if (window.TOOLBOX_POPUP) { Popup.render(); return; }
   $('#brand-version').textContent = S.app ? S.app.version : '';
   const g = $('#global-switch');
   g.checked = !!(S.app && S.app.enabled);
@@ -230,7 +237,7 @@ function onState() {
 
 // Re-rendu : complet au changement de page, sinon on évite d'écraser un champ en cours d'édition.
 function renderPage(force) {
-  if (!S.app) return;
+  if (!S.app || window.TOOLBOX_POPUP) return;
   const def = PAGES.find(p => p.id === currentId) || PAGES[0];
   const Page = def.page();
   const page = $('#page');
@@ -253,7 +260,7 @@ function renderPage(force) {
     current = {};
     return;
   }
-  page.innerHTML = (def.module ? moduleHead(def) : `<h1>${esc(def.label)}</h1>`) + Page.render();
+  page.innerHTML = (def.module ? moduleHead(def) : def.id === 'home' ? '' : `<h1>${esc(def.label)}</h1>`) + Page.render();
   page.firstElementChild?.nextElementSibling?.classList.add('fade-in');
   Page.bind?.(page);
   Page.live?.();
@@ -349,71 +356,152 @@ function chartSVG(series, { max = 100, height = 180 } = {}) {
 
 // ------------------------------------------------------------------ Accueil
 
+let qcValue = '';
+
+const clockText = d => `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+function greeting() {
+  const h = new Date().getHours();
+  return h < 5 ? 'Bonne nuit' : h < 12 ? 'Bon matin' : h < 18 ? 'Bon après-midi' : 'Bonsoir';
+}
+
+// Convertisseur rapide : « 10 km en mi », « 20 cad en usd », « 25 c en f »
+const QC_ALIASES = { pouce: 'in', pouces: 'in', po: 'in', pied: 'ft', pieds: 'ft', pi: 'ft', verge: 'yd', mille: 'mi', milles: 'mi',
+  livre: 'lb', livres: 'lb', lbs: 'lb', once: 'oz', gramme: 'g', grammes: 'g', kilo: 'kg', kilos: 'kg', litre: 'l', litres: 'l',
+  '°c': 'c', '°f': 'f', celsius: 'c', fahrenheit: 'f', kelvin: 'k', 'km/h': 'kmh', 'm/s': 'ms', noeud: 'kn', noeuds: 'kn',
+  gallon: 'gal', gallons: 'gal', tasse: 'cup', tasses: 'cup', heure: 'h', heures: 'h', minute: 'min', minutes: 'min',
+  seconde: 's', secondes: 's', jour: 'd', jours: 'd', semaine: 'w', semaines: 'w', an: 'y', ans: 'y', annee: 'y', annees: 'y',
+  '$': 'CAD', '€': 'EUR', m2: 'm2', 'm²': 'm2', 'pi²': 'ft2' };
+function quickConvert(text) {
+  const m = fold(text).trim().match(/^(-?[\d\s.,]+)\s*([^\s\d]\S*)\s+(?:en|to|in|vers|->|→|=)\s+(\S+)$/);
+  if (!m) return null;
+  const v = parseNum(m[1]);
+  const norm = u => QC_ALIASES[u] || u;
+  const from = norm(m[2]), to = norm(m[3]);
+  for (const [cat, def] of Object.entries(UNITS)) {
+    const keys = Object.keys(def.units);
+    const find = u => keys.find(k => k.toLowerCase() === u.toLowerCase());
+    const a = find(from), b = find(to);
+    if (a && b && (cat !== 'money' || conv.rates)) {
+      const r = convert(cat, a, b, v);
+      if (isFinite(r)) return `${fmtNum(v, cat)} ${a} = <b>${fmtNum(r, cat)} ${b}</b>`;
+    }
+    if (a && b && cat === 'money') { loadRates(); return 'Chargement des taux…'; }
+  }
+  return null;
+}
+
 const HomePage = {
   render() {
-    const enabledCount = S.order.filter(id => modOn(id)).length;
     const on = S.app.enabled;
-    const monOn = true;  // le Moniteur est toujours actif
-    const tiles = S.order.map(id => {
-      const m = S.modules[id];
-      const def = PAGES.find(p => p.module === id) || {};
-      return `<div class="card tight" style="cursor:pointer" data-go="${def.id}">
-        <div class="row">${icon(def.icon || 'apps')}<h3 style="margin:0">${esc(m.name)}</h3><span class="spacer"></span>
-          ${m.alwaysOn ? '' : `<input type="checkbox" class="switch" data-module-switch="${id}" ${m.enabled ? 'checked' : ''}>`}</div>
-        <div class="muted small" style="margin-top:8px">${esc(HomePage.tileInfo(id))}</div>
-      </div>`;
-    }).join('');
-
+    const name = S.app.userName ? `, ${esc(S.app.userName)}` : '';
+    const enabledCount = S.order.filter(id => modOn(id)).length;
+    const now = new Date();
     return `
-    <div class="card">
-      <div class="hero">
-        <div>${monOn ? gaugeHTML('home-cpu', 'Processeur') : '<div class="empty">' + icon('monitor') + '<div>Moniteur désactivé</div></div>'}</div>
-        <div>
-          <div class="row wrap">
-            <span class="pill ${on ? 'ok' : 'warn'}"><span class="led"></span>${on ? `Actif · ${enabledCount} fonction${enabledCount > 1 ? 's' : ''} sur ${S.order.length}` : 'En pause'}</span>
-            ${S.update && S.update.status === 'available' ? `<span class="pill" data-go="updates" style="cursor:pointer">${icon('update')} Mise à jour ${esc(S.update.latest)}</span>` : ''}
-          </div>
-          <div class="hero-stats">
-            <div><div class="label">Mémoire</div><div class="value" id="h-ram">—</div></div>
-            <div><div class="label">Disque</div><div class="value" id="h-disk">—</div></div>
-            <div><div class="label">Batterie</div><div class="value" id="h-bat">—</div></div>
-            <div><div class="label">Réseau ↓ / ↑</div><div class="value" id="h-net">—</div></div>
-          </div>
-          <div class="row wrap">
-            <button class="btn primary big" data-go="monitor">Ouvrir le moniteur</button>
-            <button class="btn big" data-go="clipboard">${icon('clipboard')} Presse-papiers</button>
-          </div>
+    <div class="home-hero">
+      <div>
+        <div class="home-date" id="h-date">${esc(now.toLocaleDateString('fr-CA', { weekday: 'long', day: 'numeric', month: 'long' }))}</div>
+        <div class="home-hello">${greeting()}${name} 👋</div>
+        <div class="row wrap" style="margin-top:14px">
+          <span class="pill ${on ? 'ok' : 'warn'}"><span class="led"></span>${on ? `Actif · ${enabledCount} fonctions sur ${S.order.length}` : 'En pause'}</span>
+          ${S.update && ['available', 'ready'].includes(S.update.status) ? `<span class="pill" data-go="updates" style="cursor:pointer">${icon('update')} Mise à jour ${esc(S.update.latest)}</span>` : ''}
         </div>
       </div>
+      <div class="home-clock" id="h-clock">${clockText(now)}</div>
     </div>
-    <h2 style="margin-top:28px">Fonctions</h2>
-    <div class="grid grid-3">${tiles}</div>`;
+
+    <div class="card home-gauges" data-go="monitor" title="Ouvrir le moniteur">
+      ${gaugeHTML('h-cpu', 'Processeur', 'small')}${gaugeHTML('h-ram', 'Mémoire', 'small')}
+      ${gaugeHTML('h-disk', 'Disque', 'small')}${gaugeHTML('h-bat', 'Batterie', 'small')}
+    </div>
+
+    <h2 class="home-section">Accès rapide</h2>
+    <div class="grid grid-3">
+      ${this.card('converter', 'convert', 'Convertir', `
+        <input type="text" id="qc" placeholder="Ex. : 10 km en mi · 25 c en f · 20 cad en usd" value="${esc(qcValue)}">
+        <div class="qc-out" id="qc-out">${quickConvert(qcValue) || '<span class="faint">Tape une valeur, une unité, « en », puis l\'autre unité.</span>'}</div>`)}
+      ${this.card('clipboard', 'clipboard', 'Presse-papiers', this.clipBody())}
+      ${this.card('app_launcher', 'apps', "Raccourcis d'apps", this.appsBody())}
+      ${this.card('processes', 'cpu', 'Programmes', this.procBody())}
+      ${this.card('place_launcher', 'place', 'Lieux', this.placeBody())}
+      ${this.card('enter_guard', 'keyboard', 'Garde Enter', this.guardBody())}
+    </div>
+
+    <h2 class="home-section">Toutes les fonctions</h2>
+    <div class="grid grid-3">${S.order.map(id => {
+      const m = S.modules[id];
+      const def = PAGES.find(p => p.module === id) || {};
+      return `<div class="card tight home-tile${m.enabled ? '' : ' off'}" data-go="${def.id}">
+        ${icon(def.icon || 'apps')}<div class="main"><b>${esc(m.name)}</b><div class="faint small ellipsis">${esc(m.description)}</div></div>
+        ${m.alwaysOn ? '<span class="chip" title="Toujours active">Toujours</span>' : `<input type="checkbox" class="switch sm" data-module-switch="${id}" ${m.enabled ? 'checked' : ''}>`}
+      </div>`;
+    }).join('')}</div>`;
   },
-  tileInfo(id) {
-    const s = modState(id);
-    switch (id) {
-      case 'enter_guard': return `${s.corrections || 0} correction${s.corrections > 1 ? 's' : ''} · touche ${s.keyName || '?'}`;
-      case 'clipboard': return `${(s.items || []).length} élément(s) mémorisé(s)`;
-      case 'app_launcher': return `${(s.groups || []).length} groupe(s)`;
-      case 'place_launcher': {
-        const here = (s.rules || []).filter(r => r.inside).map(r => r.place).filter(Boolean);
-        return `${(s.rules || []).length} lieu(x)` + (here.length ? ` · sur place : ${here.join(', ')}` : '');
-      }
-      case 'monitor': return live.monitor ? `Processeur ${Math.round(live.monitor.cpu)} %` : 'Processeur, mémoire, disque, batterie';
-      case 'converter': return 'Longueur, masse, température, devises…';
-      case 'processes': return `${(s.useless || []).length} marqué(s) inutile(s) · ${(s.stopped || []).length} à relancer`;
-      default: return S.modules[id].description;
+  card(id, ic, title, body) {
+    const def = PAGES.find(p => p.module === id) || {};
+    if (!modOn(id)) {
+      return `<div class="card home-card off"><div class="home-card-head">${icon(ic)}<h3>${esc(title)}</h3></div>
+        <div class="faint">Fonction désactivée.</div>
+        <div><button class="btn" data-toggle-module="${id}" data-value="1">Activer</button></div></div>`;
     }
+    return `<div class="card home-card"><div class="home-card-head">${icon(ic)}<h3>${esc(title)}</h3><span class="spacer"></span>
+      <button class="btn ghost small-btn" data-go="${def.id}">Ouvrir →</button></div>${body}</div>`;
+  },
+  clipBody() {
+    const s = modState('clipboard');
+    const items = (s.items || []).slice(0, 3);
+    return `${s.hotkeyEnabled && s.hotkeyLabel ? `<div class="faint small">Fenêtre rapide : <kbd class="small">${esc(s.hotkeyLabel)}</kbd></div>` : ''}
+      <div class="list">${items.length ? items.map(i => `<div class="quick-item" data-clip-id="${i.id}" title="Cliquer pour copier">${esc(i.text.slice(0, 120))}</div>`).join('')
+        : '<div class="faint">Rien de copié pour l\'instant.</div>'}</div>`;
+  },
+  appsBody() {
+    const groups = (modState('app_launcher').groups || []).slice(0, 4);
+    return groups.length ? `<div class="quick-apps">${groups.map(g => `<button class="btn" data-launch-group="${g.id}" ${g.items.length ? '' : 'disabled'}><span style="font-size:18px">${esc(g.emoji || '🚀')}</span> ${esc(g.name)}</button>`).join('')}</div>`
+      : `<div class="faint">Aucun groupe.</div><div><button class="btn" data-go="app_launcher">${icon('plus')} Créer un groupe</button></div>`;
+  },
+  procBody() {
+    const s = modState('processes');
+    const n = (s.useless || []).length, r = (s.stopped || []).length;
+    return `<div class="faint">${n} programme${n > 1 ? 's' : ''} marqué${n > 1 ? 's' : ''} inutile${n > 1 ? 's' : ''} · ${r} à relancer</div>
+      <div class="row wrap"><button class="btn primary" data-home-pm="stopUseless" ${n ? '' : 'disabled'}>${icon('leaf')} Mode léger</button>
+      <button class="btn" data-home-pm="relaunchAll" ${r ? '' : 'disabled'}>${icon('update')} Tout relancer</button></div>`;
+  },
+  placeBody() {
+    const s = modState('place_launcher');
+    const rules = s.rules || [];
+    if (!rules.length) return `<div class="faint">Aucun lieu.</div><div><button class="btn" data-go="place_launcher">${icon('plus')} Ajouter un lieu</button></div>`;
+    return `<div class="list">${rules.slice(0, 3).map(r => `<div class="row" style="gap:10px">
+      <span class="led-dot ${r.inside ? 'ok' : ''}"></span><b class="ellipsis">${esc(r.place || r.ssid || 'Lieu')}</b>
+      <span class="spacer"></span><span class="faint small">${r.inside ? 'Sur place' : 'Ailleurs'}</span></div>`).join('')}</div>
+      ${(s.connected || []).length ? `<div class="faint small">${icon('wifi', 'icon xs')} ${esc(s.connected.join(', '))}</div>` : ''}`;
+  },
+  guardBody() {
+    const s = modState('enter_guard');
+    return `<div class="row" style="gap:16px"><kbd>${esc(s.keyName || '?')}</kbd>
+      <div><div class="value big">${nf0.format(s.corrections || 0)}</div><div class="faint small">frappe${s.corrections > 1 ? 's' : ''} accidentelle${s.corrections > 1 ? 's' : ''} corrigée${s.corrections > 1 ? 's' : ''}</div></div></div>`;
+  },
+  bind(root) {
+    const qc = $('#qc', root);
+    qc?.addEventListener('input', () => { qcValue = qc.value; $('#qc-out').innerHTML = quickConvert(qcValue) || '<span class="faint">…</span>'; });
+    root.addEventListener('click', e => {
+      const clip = e.target.closest('[data-clip-id]');
+      if (clip) { moduleAction('clipboard', 'copy', { id: +clip.dataset.clipId }); toast('Copié !'); }
+      const g = e.target.closest('[data-launch-group]');
+      if (g) { moduleAction('app_launcher', 'launchGroup', { id: g.dataset.launchGroup }); toast('Lancement…'); }
+      const pm = e.target.closest('[data-home-pm]');
+      if (pm) { moduleAction('processes', pm.dataset.homePm); toast(pm.dataset.homePm === 'stopUseless' ? 'Mode léger activé' : 'Relance…'); }
+    });
   },
   live() {
+    const now = new Date();
+    const clock = document.getElementById('h-clock');
+    if (clock) clock.textContent = clockText(now);
     const m = live.monitor;
     if (!m) return;
-    setGauge('home-cpu', m.cpu);
-    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-    set('h-ram', m.ram ? `${Math.round(100 * m.ram.used / m.ram.total)} %` : '—');
-    set('h-disk', m.disk ? `${Math.round(100 * m.disk.used / m.disk.total)} %` : '—');
-    set('h-bat', m.battery ? `${m.battery.percent} %${m.battery.charging ? ' ⚡' : ''}` : 'Secteur');
-    set('h-net', m.net ? `${fmtSpeed(m.net.down)}` : '—');
+    setGauge('h-cpu', m.cpu);
+    if (m.ram) setGauge('h-ram', 100 * m.ram.used / m.ram.total);
+    if (m.disk) setGauge('h-disk', 100 * m.disk.used / m.disk.total, { hotAt: 85, critAt: 95 });
+    if (m.battery) setGauge('h-bat', m.battery.percent, { hotAt: null, critAt: null }); else setGauge('h-bat', null);
   },
 };
 
@@ -659,6 +747,7 @@ const ClipboardPage = {
   render() {
     const s = modState('clipboard');
     return `
+    <div id="clip-hotkey"></div>
     <div class="row" style="margin-bottom:14px">
       <div style="position:relative;flex:1">
         <input type="search" id="clip-search" placeholder="Rechercher dans l'historique…" value="${esc(clipQuery)}" style="padding-left:38px">
@@ -680,6 +769,17 @@ const ClipboardPage = {
     </div>`;
   },
   bind(root) {
+    $('#clip-hotkey', root).addEventListener('click', e => {
+      const b = e.target.closest('[data-hk]');
+      if (!b) return;
+      if (b.dataset.hk === 'capture') { hotkeyCapturing = true; moduleAction('clipboard', 'hotkeyCaptureStart'); this.renderHotkey(); }
+      if (b.dataset.hk === 'cancel') stopHotkeyCapture(true);
+    });
+    $('#clip-hotkey', root).addEventListener('change', e => {
+      if (e.target.id === 'hk-enabled') moduleAction('clipboard', 'setHotkeyEnabled', { value: e.target.checked });
+      if (e.target.id === 'hk-paste') moduleAction('clipboard', 'setAutoPaste', { value: e.target.checked });
+    });
+    this.renderHotkey();
     $('#clip-search', root).addEventListener('input', e => { clipQuery = e.target.value; ClipboardPage.renderList(); });
     $('#clip-clear', root).addEventListener('click', () => moduleAction('clipboard', 'clear'));
     $('#clip-keep', root).addEventListener('change', e => moduleAction('clipboard', 'setKeep', { value: e.target.checked }));
@@ -694,7 +794,30 @@ const ClipboardPage = {
     });
     this.renderList();
   },
-  update() { this.renderList(); },
+  update() { this.renderHotkey(); this.renderList(); },
+  renderHotkey() {
+    const el = document.getElementById('clip-hotkey');
+    if (!el) return;
+    const s = modState('clipboard');
+    el.innerHTML = `
+    ${s.hotkeyError && !hotkeyCapturing ? `<div class="banner">${icon('info')}<div class="text">${esc(s.hotkeyError)}</div></div>` : ''}
+    <div class="card">
+      <div class="row wrap" style="gap:22px">
+        <div class="keycap ${hotkeyCapturing ? 'listening' : ''}" style="font-size:20px;height:60px;min-width:120px">${hotkeyCapturing ? 'Appuie…' : esc(s.hotkeyLabel || '—')}</div>
+        <div style="flex:1;min-width:220px">
+          <h3>Fenêtre rapide</h3>
+          <div class="muted">Ce raccourci ouvre une petite fenêtre avec ton historique, n'importe où dans Windows. Choisis un élément : il est collé là où tu écrivais.</div>
+        </div>
+        ${hotkeyCapturing
+          ? `<div class="stack" style="align-items:flex-end"><span class="pill warn"><span class="led"></span>Appuie sur la combinaison (ex. Ctrl + Alt + V)</span><button class="btn" data-hk="cancel">Annuler</button></div>`
+          : `<button class="btn primary" data-hk="capture">${icon('keyboard')} Changer le raccourci</button>`}
+      </div>
+      <div class="row wrap" style="margin-top:18px;gap:28px">
+        <label class="row"><input type="checkbox" class="switch" id="hk-enabled" ${s.hotkeyEnabled ? 'checked' : ''}> Raccourci activé</label>
+        <label class="row"><input type="checkbox" class="switch" id="hk-paste" ${s.autoPaste ? 'checked' : ''}> Coller automatiquement</label>
+      </div>
+    </div>`;
+  },
   renderList() {
     const el = document.getElementById('clip-list');
     if (!el) return;
@@ -717,6 +840,105 @@ const ClipboardPage = {
           <button class="btn ghost icon-only" data-act="delete" title="Supprimer">${icon('trash')}</button>
         </div>
       </div>`).join('');
+  },
+};
+
+let hotkeyCapturing = false;
+
+function stopHotkeyCapture(cancel) {
+  hotkeyCapturing = false;
+  if (cancel) moduleAction('clipboard', 'hotkeyCaptureCancel');
+  ClipboardPage.renderHotkey();
+}
+
+const KEY_NAMES = { Space: 'Espace', Enter: 'Entrée', Tab: 'Tab', Backspace: 'Retour', Insert: 'Inser', Delete: 'Suppr', Home: 'Début', End: 'Fin', PageUp: 'Page ↑', PageDown: 'Page ↓', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
+document.addEventListener('keydown', e => {
+  if (!hotkeyCapturing) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key === 'Escape') return stopHotkeyCapture(true);
+  if (['Control', 'Alt', 'Shift', 'Meta', 'AltGraph'].includes(e.key)) return;  // attendre la vraie touche
+  const isF = /^F\d{1,2}$/.test(e.key);
+  if (!(e.ctrlKey || e.altKey || e.metaKey) && !isF) { toast('Ajoute Ctrl, Alt ou Windows (ex. Ctrl + Alt + V)'); return; }
+  const mods = (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.shiftKey ? 4 : 0) | (e.metaKey ? 8 : 0);
+  const keyLabel = isF ? e.key : KEY_NAMES[e.code] || (e.code.startsWith('Key') ? e.code.slice(3) : e.code.startsWith('Digit') ? e.code.slice(5) : e.key.toUpperCase());
+  const label = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Maj', e.metaKey && 'Win', keyLabel].filter(Boolean).join(' + ');
+  hotkeyCapturing = false;
+  moduleAction('clipboard', 'setHotkey', { mods, vk: e.keyCode, label });
+  ClipboardPage.renderHotkey();
+  toast('Raccourci : ' + label);
+}, true);
+
+// ------------------------------------------------------------------ Fenêtre rapide (popup du presse-papiers)
+
+const Popup = {
+  q: '',
+  sel: 0,
+  built: false,
+  items() {
+    const q = fold(this.q.trim());
+    const all = modState('clipboard').items || [];
+    const list = all.filter(i => !q || fold(i.text).includes(q));
+    return [...list.filter(i => i.pinned), ...list.filter(i => !i.pinned)];
+  },
+  build() {
+    const s = modState('clipboard');
+    $('#page').innerHTML = `
+      <div class="pop">
+        <div class="pop-head">${icon('clipboard')}<b>Presse-papiers</b><span class="spacer"></span>
+          <button class="btn ghost icon-only" id="pop-open" title="Ouvrir ToolBox">${icon('apps')}</button>
+          <button class="btn ghost icon-only" id="pop-close" title="Fermer (Échap)">${icon('close')}</button></div>
+        <div class="pop-search">${icon('search')}<input type="search" id="pop-q" placeholder="Rechercher…" autocomplete="off"></div>
+        <div class="pop-list" id="pop-list"></div>
+        <div class="pop-foot">↑ ↓ choisir · Entrée ${s.autoPaste ? 'coller' : 'copier'} · Échap fermer</div>
+      </div>`;
+    $('#pop-q').addEventListener('input', e => { this.q = e.target.value; this.sel = 0; this.renderList(); });
+    $('#pop-close').addEventListener('click', () => send({ type: 'popupClose' }));
+    $('#pop-open').addEventListener('click', () => send({ type: 'openMain' }));
+    $('#pop-list').addEventListener('click', e => {
+      const pin = e.target.closest('[data-pin]');
+      if (pin) { moduleAction('clipboard', 'pin', { id: +pin.dataset.pin }); return; }
+      const it = e.target.closest('[data-id]');
+      if (it) this.pick(+it.dataset.id);
+    });
+    $('#pop-list').addEventListener('mousemove', e => {
+      const it = e.target.closest('[data-idx]');
+      if (it && +it.dataset.idx !== this.sel) { this.sel = +it.dataset.idx; this.highlight(); }
+    });
+    document.addEventListener('keydown', e => {
+      const n = this.items().length;
+      if (e.key === 'Escape') { e.preventDefault(); send({ type: 'popupClose' }); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); this.sel = Math.min(n - 1, this.sel + 1); this.highlight(true); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); this.sel = Math.max(0, this.sel - 1); this.highlight(true); }
+      else if (e.key === 'Enter') { e.preventDefault(); const it = this.items()[this.sel]; if (it) this.pick(it.id); }
+    });
+    this.built = true;
+  },
+  pick(id) { send({ type: 'clipPaste', id }); },
+  render() {
+    if (!this.built) this.build();
+    this.renderList();
+  },
+  renderList() {
+    const el = $('#pop-list');
+    if (!el) return;
+    const items = this.items();
+    if (this.sel >= items.length) this.sel = Math.max(0, items.length - 1);
+    el.innerHTML = items.length ? items.map((i, k) => `
+      <div class="pop-item${k === this.sel ? ' sel' : ''}${i.pinned ? ' pinned' : ''}" data-id="${i.id}" data-idx="${k}">
+        <div class="pop-text">${esc(i.text.length > 300 ? i.text.slice(0, 300) + '…' : i.text)}</div>
+        <button class="btn ghost icon-only pop-pin" data-pin="${i.id}" title="${i.pinned ? 'Désépingler' : 'Épingler'}">${icon('pin')}</button>
+      </div>`).join('') : `<div class="empty">${this.q ? 'Aucun résultat' : 'Rien de copié pour l\'instant'}</div>`;
+  },
+  highlight(scroll) {
+    $$('.pop-item').forEach((el, k) => el.classList.toggle('sel', k === this.sel));
+    if (scroll) $('.pop-item.sel')?.scrollIntoView({ block: 'nearest' });
+  },
+  shown() {
+    this.q = ''; this.sel = 0;
+    const q = $('#pop-q');
+    if (q) { q.value = ''; q.focus(); }
+    this.renderList();
   },
 };
 
@@ -952,14 +1174,15 @@ const PlacePage = {
             <div class="row wrap" style="gap:6px;margin-top:4px">
               ${r.ssid ? `<span class="chip">${icon('wifi', 'icon xs')} ${esc(r.ssid)}</span>` : ''}
               ${r.useGps ? `<span class="chip">${icon('gps', 'icon xs')} rayon ${r.radius} m</span>` : ''}
-              <span class="chip" title="${esc(r.path)}">${icon('file', 'icon xs')} ${esc(fileName(r.path))}</span>
+              ${(r.paths || []).slice(0, 3).map(p => `<span class="chip" title="${esc(p)}">${icon('file', 'icon xs')} ${esc(fileName(p))}</span>`).join('')}
+              ${(r.paths || []).length > 3 ? `<span class="chip">+${r.paths.length - 3}</span>` : ''}
             </div>
           </div>
           <button class="btn ghost" data-test="${r.id}" title="Ouvrir maintenant">${icon('play')} Tester</button>
           <button class="btn ghost icon-only" data-edit="${r.id}" title="Modifier">${icon('edit')}</button>
           <input type="checkbox" class="switch" data-rule-toggle="${r.id}" ${r.enabled ? 'checked' : ''} title="Activer ce lieu">
         </div>`).join('')
-      : `<div class="card empty">${icon('place')}<div>Ajoute un lieu : quand tu y arrives, ToolBox ouvre le fichier ou l'app de ton choix.</div></div>`}
+      : `<div class="card empty">${icon('place')}<div>Ajoute un lieu : quand tu y arrives, ToolBox ouvre les apps de ton choix.</div></div>`}
     </div>`;
   },
   bind(root) {
@@ -976,7 +1199,7 @@ const PlacePage = {
   edit(id) {
     const s = modState('place_launcher');
     const existing = (s.rules || []).find(r => r.id === id);
-    const r = existing ? { ...existing } : { id: '', place: '', ssid: (s.connected || [])[0] || '', useGps: false, lat: 0, lon: 0, radius: 150, path: '', enabled: true };
+    const r = existing ? { ...existing, paths: [...(existing.paths || [])] } : { id: '', place: '', ssid: (s.connected || [])[0] || '', useGps: false, lat: 0, lon: 0, radius: 150, paths: [], enabled: true };
     const dlg = $('#dialog');
     let results = [];
     const draw = () => {
@@ -986,8 +1209,13 @@ const PlacePage = {
         <h2>${existing ? 'Modifier le lieu' : 'Nouveau lieu'}</h2>
         <label class="field"><span>Nom du lieu</span><input type="text" id="r-place" value="${esc(r.place)}" placeholder="Ex. Maison"></label>
 
-        <div class="field"><span>Fichier ou app à ouvrir</span>
-          <div class="row"><input type="text" id="r-path" value="${esc(r.path)}" placeholder="C:\\…\\app.exe" readonly><button class="btn" id="r-pick">${icon('folder')} Choisir…</button></div></div>
+        <div class="field"><span>Apps et fichiers à ouvrir (${r.paths.length})</span>
+          <div class="list">${r.paths.length ? r.paths.map((p, i) => `
+            <div class="list-item" style="padding:8px 12px">${icon('file')}
+              <div class="main ellipsis" title="${esc(p)}">${esc(fileName(p))}<div class="faint small ellipsis">${esc(p)}</div></div>
+              <button class="btn ghost icon-only" data-rm-path="${i}" title="Retirer">${icon('close')}</button></div>`).join('')
+            : '<div class="faint small">Aucune app pour l\'instant.</div>'}</div>
+          <div><button class="btn" id="r-pick">${icon('plus')} Ajouter une app ou un fichier</button></div></div>
 
         <div class="setting" style="margin:0;padding:12px 16px">${icon('wifi')}
           <div class="text"><div class="title">Réseau Wi-Fi</div><div class="desc">Laisse vide pour ne pas l'utiliser.</div></div>
@@ -1019,7 +1247,8 @@ const PlacePage = {
         r.place = $('#r-place', dlg).value; r.ssid = $('#r-ssid', dlg).value.trim();
         const rad = $('#r-radius', dlg); if (rad) r.radius = +rad.value;
       };
-      $('#r-pick', dlg).addEventListener('click', async () => { keep(); const p = await pickFile(); if (p) { r.path = p; draw(); } });
+      $('#r-pick', dlg).addEventListener('click', async () => { keep(); const p = await pickFile(); if (p && !r.paths.includes(p)) { r.paths.push(p); draw(); } });
+      $$('[data-rm-path]', dlg).forEach(b => b.addEventListener('click', () => { keep(); r.paths.splice(+b.dataset.rmPath, 1); draw(); }));
       $('#r-gps', dlg).addEventListener('change', e => { keep(); r.useGps = e.target.checked; draw(); });
       const rad = $('#r-radius', dlg);
       if (rad) { setRangeFill(rad); rad.addEventListener('input', () => { $('#r-radius-v', dlg).textContent = rad.value + ' m'; setRangeFill(rad); }); }
@@ -1052,7 +1281,7 @@ const PlacePage = {
       $('#r-del', dlg)?.addEventListener('click', () => { moduleAction('place_launcher', 'deleteRule', { id: r.id }); dlg.close(); });
       $('#r-save', dlg).addEventListener('click', () => {
         keep();
-        if (!r.path) return toast('Choisis un fichier ou une app');
+        if (!r.paths.length) return toast('Ajoute au moins une app ou un fichier');
         if (!r.ssid && !(r.useGps && (r.lat || r.lon))) return toast('Indique un Wi-Fi ou une position GPS');
         moduleAction('place_launcher', 'saveRule', { rule: r });
         dlg.close();
@@ -1143,24 +1372,24 @@ const Mock = {
     const now = Math.floor(Date.now() / 1000);
     this.state = {
       type: 'state',
-      app: { version: '0.1.0', enabled: true, startWithWindows: true, minimizeToTray: true, autoUpdate: true, dataDir: 'C:\\Users\\Mederic\\AppData\\Roaming\\ToolBox' },
+      app: { version: '0.2.0', userName: 'Médéric', enabled: true, startWithWindows: true, minimizeToTray: true, autoUpdate: true, dataDir: 'C:\\Users\\Mederic\\AppData\\Roaming\\ToolBox' },
       update: { current: '0.1.0', status: 'upToDate', latest: 'v0.1.0', notes: '', progress: 0, lastCheck: now - 120 },
       modules: [
         { id: 'monitor', name: 'Moniteur', description: 'Processeur, mémoire, disque et batterie en direct.', enabled: true, alwaysOn: true, running: true, state: {} },
+        { id: 'converter', name: 'Convertisseur', description: 'Unités et devises.', enabled: true, alwaysOn: true, running: true, state: {} },
         { id: 'processes', name: 'Programmes', description: "Arrête les programmes inutiles pour libérer de la mémoire, puis relance-les d'un clic.", enabled: true, running: true, state: {
           useless: ['c:\\program files\\teams\\ms-teams.exe'], lastEvent: '', stopped: [{ path: 'C:\\Users\\Mederic\\AppData\\Local\\Discord\\Discord.exe', name: 'Discord', time: now - 300 }] } },
         { id: 'enter_guard', name: 'Garde Enter', description: "Supprime la touche voisine d'Enter frappée par accident.", enabled: true, running: true, state: { keyName: 'À', isDefaultKey: true, thresholdMs: 80, corrections: 12, exclusions: [], capturing: false } },
-        { id: 'clipboard', name: 'Presse-papiers', description: 'Retrouve tout ce que tu as copié.', enabled: true, running: true, state: { maxItems: 50, keepAfterRestart: false, items: [
+        { id: 'clipboard', name: 'Presse-papiers', description: 'Retrouve tout ce que tu as copié.', enabled: true, running: true, state: { maxItems: 50, keepAfterRestart: false, hotkeyEnabled: true, hotkeyLabel: 'Ctrl + Alt + V', hotkeyError: '', autoPaste: true, items: [
           { id: 3, text: 'https://github.com/Mede2026/ToolBox', time: now - 30, pinned: false },
           { id: 2, text: 'Exercice 4 : 3/4 + 5/6 = 19/12', time: now - 600, pinned: true },
           { id: 1, text: 'Massif de Charlevoix — horaire des remontées', time: now - 7200, pinned: false }] } },
-        { id: 'converter', name: 'Convertisseur', description: 'Unités et devises.', enabled: true, running: true, state: {} },
         { id: 'app_launcher', name: "Raccourcis d'apps", description: 'Lance plusieurs apps d\'un seul clic.', enabled: true, running: true, state: { groups: [
           { id: 'g1', name: 'Devoirs', emoji: '📚', items: ['C:\\Program Files\\Microsoft Office\\WINWORD.EXE', 'https://www.alloprof.qc.ca'] },
           { id: 'g2', name: 'DJ', emoji: '🎧', items: ['C:\\Program Files\\rekordbox\\rekordbox.exe'] }] } },
         { id: 'place_launcher', name: 'Lancement par lieu', description: 'Ouvre un fichier ou une app quand tu arrives à un endroit (Wi-Fi ou GPS).', enabled: true, running: true, state: {
           connected: ['Maison-5G'], wifiError: '', gpsError: '', lastEvent: '', position: { lat: 45.5913, lon: -73.4364, accuracy: 35, time: now - 40 },
-          rules: [{ id: 'r1', place: 'Maison', ssid: 'Maison-5G', useGps: true, lat: 45.5913, lon: -73.4364, radius: 150, path: 'C:\\Program Files\\rekordbox\\rekordbox.exe', enabled: true, inside: true }] } },
+          rules: [{ id: 'r1', place: 'Maison', ssid: 'Maison-5G', useGps: true, lat: 45.5913, lon: -73.4364, radius: 150, paths: ['C:\\Program Files\\rekordbox\\rekordbox.exe', 'C:\\Program Files\\Spotify\\Spotify.exe'], enabled: true, inside: true }] } },
       ],
     };
     setTimeout(() => receive(this.state), 50);
@@ -1186,6 +1415,7 @@ const Mock = {
     else if (msg.type === 'setSetting') s.app[msg.key] = msg.value;
     else if (msg.type === 'pickFile') return setTimeout(() => receive({ type: 'filePicked', requestId: msg.requestId, path: 'C:\\Program Files\\Exemple\\app.exe' }), 100);
     else if (msg.type === 'moduleAction' && msg.id === 'converter' && msg.action === 'setPref') mod('converter').state[msg.payload.key] = msg.payload.value;
+    else if (msg.type === 'moduleAction' && msg.id === 'clipboard' && msg.action === 'setHotkey') mod('clipboard').state.hotkeyLabel = msg.payload.label;
     else return;
     receive(JSON.parse(JSON.stringify(s)));
   },
@@ -1193,6 +1423,7 @@ const Mock = {
 
 // ------------------------------------------------------------------ Démarrage
 
+if (window.TOOLBOX_POPUP) document.body.classList.add('popup');
 if (webview) {
   webview.addEventListener('message', e => receive(e.data));
   send({ type: 'ready' });

@@ -21,6 +21,19 @@ long long NowSeconds() {
              std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
+// « paths » (liste) ; les réglages de la 0.1 avaient un seul « path ».
+std::vector<std::string> ReadPaths(const json& r) {
+  std::vector<std::string> out;
+  if (auto it = r.find("paths"); it != r.end() && it->is_array()) {
+    for (const auto& p : *it) {
+      if (p.is_string() && !p.get<std::string>().empty()) out.push_back(p.get<std::string>());
+    }
+  } else if (auto p = r.value("path", ""); !p.empty()) {
+    out.push_back(p);
+  }
+  return out;
+}
+
 std::string NewId() {
   static unsigned counter = 0;
   return "r" + std::to_string(NowSeconds()) + "_" + std::to_string(++counter);
@@ -70,7 +83,7 @@ void PlaceLauncher::LoadConfig(const json& cfg) {
       rule.lat = r.value("lat", 0.0);
       rule.lon = r.value("lon", 0.0);
       rule.radius_m = std::clamp(r.value("radius", 150), 30, 5000);
-      rule.path = r.value("path", "");
+      rule.paths = ReadPaths(r);
       rule.enabled = r.value("enabled", true);
       rule.last_run = r.value("lastRun", 0LL);
       rules_.push_back(std::move(rule));
@@ -82,7 +95,7 @@ json PlaceLauncher::SaveConfig() const {
   json rules = json::array();
   for (const auto& r : rules_) {
     rules.push_back({{"id", r.id}, {"place", r.place}, {"ssid", r.ssid}, {"useGps", r.use_gps},
-                     {"lat", r.lat}, {"lon", r.lon}, {"radius", r.radius_m}, {"path", r.path},
+                     {"lat", r.lat}, {"lon", r.lon}, {"radius", r.radius_m}, {"paths", r.paths},
                      {"enabled", r.enabled}, {"lastRun", r.last_run}});
   }
   return json{{"rules", rules}};
@@ -116,7 +129,7 @@ void PlaceLauncher::HandleAction(const std::string& action, const json& payload)
     rule.lat = r.value("lat", 0.0);
     rule.lon = r.value("lon", 0.0);
     rule.radius_m = std::clamp(r.value("radius", 150), 30, 5000);
-    rule.path = r.value("path", "");
+    rule.paths = ReadPaths(r);
     rule.enabled = r.value("enabled", true);
     // Si on est déjà sur place, pas de lancement immédiat : seulement à la prochaine arrivée.
     // On suppose donc « déjà sur place » ; le prochain Tick corrige sans lancer.
@@ -192,7 +205,7 @@ void PlaceLauncher::Tick() {
   const bool fix_fresh = fix.valid && now_s - fix.time <= kGpsMaxAgeSec;
 
   for (auto& rule : rules_) {
-    if (!rule.enabled || rule.path.empty()) continue;
+    if (!rule.enabled || rule.paths.empty()) continue;
 
     const bool wifi_here = !rule.ssid.empty() && connected_.count(rule.ssid) > 0;
     if (rule.use_gps && fix_fresh) {
@@ -216,17 +229,19 @@ void PlaceLauncher::Tick() {
 }
 
 void PlaceLauncher::Launch(Rule& rule) {
-  const std::wstring path = util::FromUtf8(rule.path);
-  const std::wstring dir = std::filesystem::path(path).parent_path().wstring();
-  const auto rc = reinterpret_cast<INT_PTR>(
-      ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, dir.empty() ? nullptr : dir.c_str(), SW_SHOWNORMAL));
-  const std::string label = rule.place.empty() ? rule.ssid : rule.place;
-  const std::string file = util::ToUtf8(std::filesystem::path(path).filename().wstring());
-  if (rc > 32) {
-    rule.last_run = NowSeconds();
-    last_event_ = file + " ouvert (" + label + ")";
-  } else {
-    last_event_ = "Impossible d'ouvrir " + file;
+  int ok = 0;
+  std::string failed;
+  for (const auto& p : rule.paths) {
+    const std::wstring path = util::FromUtf8(p);
+    const std::wstring dir = std::filesystem::path(path).parent_path().wstring();
+    const auto rc = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, dir.empty() ? nullptr : dir.c_str(), SW_SHOWNORMAL));
+    if (rc > 32) ++ok;
+    else failed = util::ToUtf8(std::filesystem::path(path).filename().wstring());
   }
+  const std::string label = rule.place.empty() ? rule.ssid : rule.place;
+  if (ok) rule.last_run = NowSeconds();
+  last_event_ = label + " : " + std::to_string(ok) + "/" + std::to_string(rule.paths.size()) + " app(s) ouverte(s)" +
+                (failed.empty() ? "" : " (échec : " + failed + ")");
   if (on_change_) on_change_();
 }

@@ -46,7 +46,7 @@ class PlaceLauncher : public Module {
     bool use_gps = false;
     double lat = 0, lon = 0;
     int radius_m = 150;
-    std::string path;        // fichier ou app à ouvrir
+    std::vector<std::string> paths;  // fichiers ou apps à ouvrir
     bool enabled = true;
     long long last_run = 0;
     // État (non sauvegardé)

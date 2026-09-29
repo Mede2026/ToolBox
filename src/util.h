@@ -21,4 +21,7 @@ std::wstring ForegroundProcessName();
 
 std::wstring ToLower(std::wstring s);
 
+// Prénom de l'utilisateur Windows (ex. « Médéric »), pour l'accueil.
+std::wstring UserFirstName();
+
 }  // namespace util
