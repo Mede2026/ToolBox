@@ -35,6 +35,9 @@ class Module {
   // Appelé toutes les quelques secondes pendant que le module tourne.
   virtual void Tick() {}
 
+  // Vrai = fonction toujours active, sans interrupteur (ex. Moniteur).
+  virtual bool AlwaysOn() const { return false; }
+
   // Données en direct envoyées chaque seconde quand la fenêtre est visible (null = aucune).
   virtual nlohmann::json Live() { return nullptr; }
 

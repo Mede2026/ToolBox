@@ -380,6 +380,7 @@ void App::PushState() {
         {"name", m->Name()},
         {"description", m->Description()},
         {"enabled", ModuleEnabled(m->Id())},
+        {"alwaysOn", m->AlwaysOn()},
         {"running", m->Running()},
         {"state", m->State()},
     });
@@ -427,7 +428,7 @@ void App::OnWebMessage(const json& msg) {
     }
   } else if (type == "setModule") {
     const std::string id = msg.value("id", "");
-    if (FindModule(id)) {
+    if (Module* m = FindModule(id); m && !m->AlwaysOn()) {
       settings_.Module(id)["enabled"] = msg.value("enabled", true);
       ApplyModules();
     }
@@ -469,6 +470,7 @@ void App::OnWebMessage(const json& msg) {
 // ---------------------------------------------------------------- Modules
 
 bool App::ModuleEnabled(const std::string& id) {
+  if (Module* m = FindModule(id); m && m->AlwaysOn()) return true;
   return settings_.Get(settings_.Module(id), "enabled", true);
 }
 
@@ -488,7 +490,7 @@ void App::SaveModule(Module& m) {
 void App::ApplyModules() {
   const bool global = settings_.Get(settings_.Root(), "enabled", true);
   for (auto& m : modules_) {
-    const bool want = global && ModuleEnabled(m->Id());
+    const bool want = m->AlwaysOn() || (global && ModuleEnabled(m->Id()));
     if (want && !m->Running()) m->Start();
     if (!want && m->Running()) m->Stop();
   }

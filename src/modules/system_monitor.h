@@ -15,6 +15,7 @@ class SystemMonitor : public Module {
   void Start() override { running_ = true; }
   void Stop() override { running_ = false; }
   bool Running() const override { return running_; }
+  bool AlwaysOn() const override { return true; }
 
   void LoadConfig(const nlohmann::json&) override {}
   nlohmann::json SaveConfig() const override { return nlohmann::json::object(); }

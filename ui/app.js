@@ -198,7 +198,7 @@ function renderNav() {
     const m = p.module && S.modules[p.module];
     const off = m && !m.enabled;
     const badge = p.id === 'updates' && S.update && ['available', 'ready'].includes(S.update.status);
-    const right = m
+    const right = m && !m.alwaysOn
       ? `<input type="checkbox" class="switch sm" data-module-switch="${p.module}" ${m.enabled ? 'checked' : ''} title="${m.enabled ? 'Désactiver' : 'Activer'} ${esc(p.label)}">`
       : badge ? '<span class="dot" style="background:var(--accent);opacity:1"></span>' : '';
     return `<div class="nav-item${p.id === currentId ? ' active' : ''}${off ? ' off' : ''}" role="button" tabindex="0" data-go="${p.id}">
@@ -261,6 +261,8 @@ function renderPage(force) {
 
 function moduleHead(def) {
   const m = S.modules[def.module];
+  if (m && m.alwaysOn) return `<div class="page-head"><h1>${esc(def.label)}</h1></div>
+    <p class="page-desc">${esc(m.description)}</p>`;
   return `<div class="page-head"><h1>${esc(def.label)}</h1><span class="spacer"></span>
     <label class="row" title="Activer / désactiver cette fonction">
       <span class="muted">${m && m.enabled ? 'Activé' : 'Désactivé'}</span>
@@ -351,13 +353,13 @@ const HomePage = {
   render() {
     const enabledCount = S.order.filter(id => modOn(id)).length;
     const on = S.app.enabled;
-    const monOn = modOn('monitor');
+    const monOn = true;  // le Moniteur est toujours actif
     const tiles = S.order.map(id => {
       const m = S.modules[id];
       const def = PAGES.find(p => p.module === id) || {};
       return `<div class="card tight" style="cursor:pointer" data-go="${def.id}">
         <div class="row">${icon(def.icon || 'apps')}<h3 style="margin:0">${esc(m.name)}</h3><span class="spacer"></span>
-          <input type="checkbox" class="switch" data-module-switch="${id}" ${m.enabled ? 'checked' : ''}></div>
+          ${m.alwaysOn ? '' : `<input type="checkbox" class="switch" data-module-switch="${id}" ${m.enabled ? 'checked' : ''}>`}</div>
         <div class="muted small" style="margin-top:8px">${esc(HomePage.tileInfo(id))}</div>
       </div>`;
     }).join('');
@@ -493,7 +495,7 @@ const ProcessesPage = {
     </div>
     <div class="list" id="pm-list"><div class="card empty">Chargement de la liste…</div></div>
     <div id="pm-stopped"></div>
-    <p class="faint small" style="margin-top:18px">🔒 Les programmes de Windows sont cachés et protégés. « Arrêter » ferme proprement (comme ✕) ; « Forcer » arrête immédiatement (le travail non enregistré est perdu).</p>`;
+    <p class="faint small" style="margin-top:18px">🔒 Les programmes de Windows sont cachés et protégés.<br><b>Arrêter</b> ferme proprement, comme le ✕ de la fenêtre (le programme peut demander d'enregistrer). <b>Forcer</b> l'arrête immédiatement : le travail non enregistré est perdu, à utiliser seulement si le programme ne répond plus.</p>`;
   },
   bind(root) {
     const watch = () => { if (current === ProcessesPage && modOn('processes')) moduleAction('processes', 'watch'); else { clearInterval(procWatchTimer); procWatchTimer = null; } };
@@ -557,8 +559,8 @@ const ProcessesPage = {
         <div style="width:90px;text-align:right"><div class="faint small">Mémoire</div><b>${fmtBytes(p.ram)}</b></div>
         <div style="width:70px;text-align:right"><div class="faint small">CPU</div><b>${nf1.format(p.cpu)} %</b></div>
         <div class="actions" style="opacity:1">
-          <button class="btn" data-pm="stop" data-key="${esc(p.key)}">${icon('stop')} Arrêter</button>
-          <button class="btn ghost icon-only danger" data-pm="forceStop" data-key="${esc(p.key)}" title="Forcer l'arrêt">${icon('close')}</button>
+          <button class="btn" data-pm="stop" data-key="${esc(p.key)}" title="Ferme proprement, comme le ✕ de sa fenêtre (il peut demander d'enregistrer)">${icon('stop')} Arrêter</button>
+          <button class="btn ghost danger" data-pm="forceStop" data-key="${esc(p.key)}" title="Arrêt immédiat : le travail non enregistré est perdu. Utile si le programme ne répond plus.">Forcer</button>
         </div>
       </div>`).join('');
   },
@@ -1074,7 +1076,7 @@ const SettingsPage = {
     ${row('startWithWindows', 'startup', 'Démarrer avec Windows', 'ToolBox se lance en arrière-plan à l\'ouverture de session.')}
     ${row('minimizeToTray', 'tray', 'Réduire dans la barre des tâches', 'Le bouton ✕ cache la fenêtre au lieu de quitter. Clic droit sur l\'icône près de l\'horloge pour quitter.')}
     <div class="section-title">Fonctions</div>
-    ${S.order.map(id => { const m = S.modules[id]; const def = PAGES.find(p => p.module === id) || {}; return `<div class="setting">${icon(def.icon || 'apps')}
+    ${S.order.filter(id => !S.modules[id].alwaysOn).map(id => { const m = S.modules[id]; const def = PAGES.find(p => p.module === id) || {}; return `<div class="setting">${icon(def.icon || 'apps')}
       <div class="text"><div class="title">${esc(m.name)}</div><div class="desc">${esc(m.description)}</div></div>
       <input type="checkbox" class="switch" data-module-switch="${id}" ${m.enabled ? 'checked' : ''}></div>`; }).join('')}
     <div class="section-title">Données</div>
@@ -1144,7 +1146,7 @@ const Mock = {
       app: { version: '0.1.0', enabled: true, startWithWindows: true, minimizeToTray: true, autoUpdate: true, dataDir: 'C:\\Users\\Mederic\\AppData\\Roaming\\ToolBox' },
       update: { current: '0.1.0', status: 'upToDate', latest: 'v0.1.0', notes: '', progress: 0, lastCheck: now - 120 },
       modules: [
-        { id: 'monitor', name: 'Moniteur', description: 'Processeur, mémoire, disque et batterie en direct.', enabled: true, running: true, state: {} },
+        { id: 'monitor', name: 'Moniteur', description: 'Processeur, mémoire, disque et batterie en direct.', enabled: true, alwaysOn: true, running: true, state: {} },
         { id: 'processes', name: 'Programmes', description: "Arrête les programmes inutiles pour libérer de la mémoire, puis relance-les d'un clic.", enabled: true, running: true, state: {
           useless: ['c:\\program files\\teams\\ms-teams.exe'], lastEvent: '', stopped: [{ path: 'C:\\Users\\Mederic\\AppData\\Local\\Discord\\Discord.exe', name: 'Discord', time: now - 300 }] } },
         { id: 'enter_guard', name: 'Garde Enter', description: "Supprime la touche voisine d'Enter frappée par accident.", enabled: true, running: true, state: { keyName: 'À', isDefaultKey: true, thresholdMs: 80, corrections: 12, exclusions: [], capturing: false } },
