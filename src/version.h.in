@@ -1,0 +1,9 @@
+#pragma once
+
+#define TOOLBOX_VERSION_STR L"@PROJECT_VERSION@"
+#define TOOLBOX_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define TOOLBOX_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define TOOLBOX_VERSION_PATCH @PROJECT_VERSION_PATCH@
+
+// Dépôt GitHub utilisé pour les mises à jour automatiques.
+#define TOOLBOX_REPO L"Mede2026/ToolBox"

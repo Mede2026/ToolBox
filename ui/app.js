@@ -1,0 +1,1200 @@
+'use strict';
+
+/* ==========================================================================
+   ToolBox — interface
+   Le C++ envoie l'état ({type:"state"}) et les mesures en direct ({type:"live"}).
+   L'interface répond avec des messages comme {type:"setModule", id, enabled}.
+   ========================================================================== */
+
+// ------------------------------------------------------------------ Outils
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const nf1 = new Intl.NumberFormat('fr-CA', { maximumFractionDigits: 1 });
+const nf0 = new Intl.NumberFormat('fr-CA', { maximumFractionDigits: 0 });
+
+function fmtBytes(b) {
+  if (b == null) return '—';
+  const u = ['o', 'Ko', 'Mo', 'Go', 'To'];
+  let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return `${i >= 3 ? nf1.format(b) : nf0.format(b)} ${u[i]}`;
+}
+function fmtSpeed(bps) {
+  if (bps == null) return '—';
+  if (bps < 1024 * 1024) return `${nf0.format(bps / 1024)} Ko/s`;
+  return `${nf1.format(bps / 1024 / 1024)} Mo/s`;
+}
+function fmtDuration(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  if (d) return `${d} j ${h} h`;
+  if (h) return `${h} h ${m} min`;
+  return `${m} min`;
+}
+function fmtAgo(ts) {
+  if (!ts) return 'jamais';
+  const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (s < 60) return `il y a ${s} s`;
+  if (s < 3600) return `il y a ${Math.round(s / 60)} min`;
+  if (s < 86400) return `il y a ${Math.round(s / 3600)} h`;
+  return new Date(ts * 1000).toLocaleDateString('fr-CA', { day: 'numeric', month: 'long' });
+}
+function fileName(path) { return String(path || '').split(/[\\/]/).pop(); }
+
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.hidden = false;
+  t.classList.remove('fade-in'); void t.offsetWidth; t.classList.add('fade-in');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 1800);
+}
+
+// Icônes (traits 24×24, style Fluent)
+const ICONS = {
+  home: 'M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z',
+  monitor: 'M4 19V11M9.3 19V5M14.6 19v-7M20 19V8',
+  keyboard: 'M3.5 6.5h17a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-17a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM7 10h.01M10.5 10h.01M14 10h.01M17.5 10h.01M8 14h8',
+  clipboard: 'M9 4.5h6M9 4.5a1 1 0 0 0-1 1V6a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-.5a1 1 0 0 0-1-1M9 4.5H7a2 2 0 0 0-2 2V19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6.5a2 2 0 0 0-2-2h-2M9 12h6M9 16h4',
+  convert: 'M4 8h13l-3.5-3.5M20 16H7l3.5 3.5',
+  apps: 'M4.5 4.5h5v5h-5zM14.5 4.5h5v5h-5zM4.5 14.5h5v5h-5zM14.5 14.5h5v5h-5z',
+  place: 'M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21zM12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+  settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 13.5l1.6 1.2-2 3.4-1.9-.8a7 7 0 0 1-1.7 1l-.3 2h-4l-.3-2a7 7 0 0 1-1.7-1l-1.9.8-2-3.4 1.6-1.2a7 7 0 0 1 0-2L3 10.3l2-3.4 1.9.8a7 7 0 0 1 1.7-1l.3-2h4l.3 2a7 7 0 0 1 1.7 1l1.9-.8 2 3.4-1.6 1.2a7 7 0 0 1 0 2z',
+  update: 'M20 12a8 8 0 1 1-2.4-5.7M20 4v4.5h-4.5',
+  copy: 'M9 9h10v11H9zM5 15V4h10',
+  pin: 'M9 4h6l-1 5 3 3v1H7v-1l3-3zM12 13v7',
+  trash: 'M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13',
+  edit: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4',
+  play: 'M8 5.5v13l10-6.5z',
+  plus: 'M12 5v14M5 12h14',
+  swap: 'M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7',
+  wifi: 'M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01',
+  gps: 'M12 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM12 2v3M12 19v3M2 12h3M19 12h3M12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+  folder: 'M3.5 6.5a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1V18a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z',
+  file: 'M6 3h8l4 4v14H6zM14 3v4h4',
+  link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+  power: 'M12 3v8M7.5 6.3a7 7 0 1 0 9 0',
+  search: 'M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM20 20l-4.8-4.8',
+  close: 'M6 6l12 12M18 6 6 18',
+  info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v5M12 8h.01',
+  startup: 'M5 12h11M12 7l5 5-5 5M20 4v16',
+  cpu: 'M7 7h10v10H7zM10 10h4v4h-4zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4',
+  star: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z',
+  stop: 'M7 7h10v10H7z',
+  leaf: 'M5 19c0-8 5-13 14-14 0 9-5 14-13 14zM5 19l7-7',
+  tray: 'M4 14h4l1.5 2.5h5L16 14h4M4 14l2.5-8h11l2.5 8v5H4z',
+};
+const icon = (name, cls = 'icon') => `<svg class="${cls}" viewBox="0 0 24 24"><path d="${ICONS[name] || ''}"/></svg>`;
+
+// ------------------------------------------------------------------ Pont avec le C++
+
+const webview = window.chrome && window.chrome.webview;
+const S = { app: null, modules: {}, order: [], update: null };   // état reçu du C++
+let live = {};                                                   // dernières mesures
+const hist = { cpu: [], ram: [] };                            // 90 dernières secondes
+const pendingPicks = new Map();
+
+function send(msg) {
+  if (webview) webview.postMessage(msg);
+  else Mock.handle(msg);
+}
+const moduleAction = (id, action, payload = {}) => send({ type: 'moduleAction', id, action, payload });
+const modState = id => (S.modules[id] && S.modules[id].state) || {};
+const modOn = id => !!(S.modules[id] && S.modules[id].enabled);
+
+function pickFile() {
+  const requestId = String(Math.random());
+  send({ type: 'pickFile', requestId });
+  return new Promise(resolve => pendingPicks.set(requestId, resolve));
+}
+
+function receive(msg) {
+  if (!msg || typeof msg !== 'object') return;
+  switch (msg.type) {
+    case 'state': {
+      S.app = msg.app;
+      S.update = msg.update;
+      S.order = msg.modules.map(m => m.id);
+      S.modules = Object.fromEntries(msg.modules.map(m => [m.id, m]));
+      onState();
+      break;
+    }
+    case 'live': {
+      live = msg.live || {};
+      if (live.processes) procData = live.processes;
+      const mon = live.monitor;
+      if (mon) {
+        push(hist.cpu, mon.cpu);
+        push(hist.ram, mon.ram ? 100 * mon.ram.used / mon.ram.total : null);
+      }
+      if (current.live) current.live();
+      break;
+    }
+    case 'update':
+      S.update = msg.update;
+      if (currentId === 'updates' || currentId === 'home') renderPage(true);
+      renderNav();
+      break;
+    case 'filePicked': {
+      const resolve = pendingPicks.get(msg.requestId);
+      pendingPicks.delete(msg.requestId);
+      if (resolve) resolve(msg.path || '');
+      break;
+    }
+  }
+}
+function push(arr, v) { arr.push(v); if (arr.length > 90) arr.shift(); }
+
+// ------------------------------------------------------------------ Navigation
+
+const PAGES = [
+  { id: 'home', label: 'Accueil', icon: 'home', keys: 'accueil resume', page: () => HomePage },
+  { id: 'monitor', label: 'Moniteur', icon: 'monitor', module: 'monitor', keys: 'cpu processeur ram memoire disque batterie reseau internet vitesse', page: () => MonitorPage },
+  { id: 'processes', label: 'Programmes', icon: 'cpu', module: 'processes', keys: 'taches tuer fermer arreter relancer ressources lent mode leger', page: () => ProcessesPage },
+  { id: 'enter_guard', label: 'Garde Enter', icon: 'keyboard', module: 'enter_guard', keys: 'a clavier touche accident entree faute', page: () => EnterGuardPage },
+  { id: 'clipboard', label: 'Presse-papiers', icon: 'clipboard', module: 'clipboard', keys: 'copier coller ctrl c v historique texte', page: () => ClipboardPage },
+  { id: 'converter', label: 'Convertisseur', icon: 'convert', module: 'converter', keys: 'unites devises argent dollar euro temperature longueur masse', page: () => ConverterPage },
+  { id: 'app_launcher', label: "Raccourcis d'apps", icon: 'apps', module: 'app_launcher', keys: 'lancer groupe raccourci ouvrir apps', page: () => AppLauncherPage },
+  { id: 'place_launcher', label: 'Lancement par lieu', icon: 'place', module: 'place_launcher', keys: 'gps wifi maison ecole lieu adresse position', page: () => PlacePage },
+  { sep: true },
+  { id: 'settings', label: 'Paramètres', icon: 'settings', keys: 'demarrage windows options reglages', page: () => SettingsPage },
+  { id: 'updates', label: 'Mises à jour', icon: 'update', keys: 'version nouveautes maj', page: () => UpdatesPage },
+  { url: 'https://mede2026.github.io/pnyx-privacy/apps/index.html', label: 'Mes apps', icon: 'link', keys: 'site web internet pnyx' },
+];
+
+let currentId = (() => { try { return localStorage.getItem('page') || 'home'; } catch { return 'home'; } })();
+let current = {};
+
+function go(id) {
+  currentId = id;
+  try { localStorage.setItem('page', id); } catch { /* ignore */ }
+  renderNav();
+  renderPage(true);
+  $('#main').scrollTop = 0;
+}
+
+let navQuery = '';
+const fold = t => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+function navMatches(p) {
+  if (!navQuery) return true;
+  const hay = fold([p.label, p.keys, p.module && S.modules[p.module]?.description].join(' '));
+  return fold(navQuery).split(/\s+/).filter(Boolean).every(w => hay.includes(w));
+}
+
+function renderNav() {
+  const nav = $('#nav');
+  const items = PAGES.filter(p => p.sep ? !navQuery : navMatches(p));
+  nav.innerHTML = items.map(p => {
+    if (p.sep) return '<div class="nav-sep"></div>';
+    if (p.url) return `<div class="nav-item" role="button" tabindex="0" data-url="${esc(p.url)}" title="${esc(p.url)}">${icon(p.icon)}<span>${esc(p.label)}</span><span style="margin-left:auto;color:var(--text-3)">↗</span></div>`;
+    const m = p.module && S.modules[p.module];
+    const off = m && !m.enabled;
+    const badge = p.id === 'updates' && S.update && ['available', 'ready'].includes(S.update.status);
+    const right = m
+      ? `<input type="checkbox" class="switch sm" data-module-switch="${p.module}" ${m.enabled ? 'checked' : ''} title="${m.enabled ? 'Désactiver' : 'Activer'} ${esc(p.label)}">`
+      : badge ? '<span class="dot" style="background:var(--accent);opacity:1"></span>' : '';
+    return `<div class="nav-item${p.id === currentId ? ' active' : ''}${off ? ' off' : ''}" role="button" tabindex="0" data-go="${p.id}">
+      ${icon(p.icon)}<span>${esc(p.label)}</span>${right}
+    </div>`;
+  }).join('') || '<div class="nav-empty">Aucune fonction trouvée</div>';
+}
+
+$('#nav-search').addEventListener('input', e => { navQuery = e.target.value.trim(); renderNav(); });
+$('#nav-search').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const first = $('#nav [data-go], #nav [data-url]');
+    if (first) first.click();
+  } else if (e.key === 'Escape') { e.target.value = ''; navQuery = ''; renderNav(); }
+});
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key.toLowerCase() === 'f') { e.preventDefault(); $('#nav-search').focus(); $('#nav-search').select(); }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList?.contains('nav-item')) { e.preventDefault(); e.target.click(); }
+});
+
+function onState() {
+  $('#brand-version').textContent = S.app ? S.app.version : '';
+  const g = $('#global-switch');
+  g.checked = !!(S.app && S.app.enabled);
+  $('#global-label').textContent = g.checked ? 'Activé' : 'En pause';
+  renderNav();
+  renderPage(false);
+}
+
+// Re-rendu : complet au changement de page, sinon on évite d'écraser un champ en cours d'édition.
+function renderPage(force) {
+  if (!S.app) return;
+  const def = PAGES.find(p => p.id === currentId) || PAGES[0];
+  const Page = def.page();
+  const page = $('#page');
+  const editing = page.contains(document.activeElement) &&
+    ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) &&
+    document.activeElement.type !== 'checkbox';
+
+  if (!force && current === Page && Page.update) { Page.update(); return; }
+  if (!force && current === Page && (editing || $('#dialog').open)) return;
+
+  current = Page;
+  if (def.module && !modOn(def.module)) {
+    page.innerHTML = moduleHead(def) + `
+      <div class="card empty fade-in">
+        ${icon(def.icon)}
+        <h2>Cette fonction est désactivée</h2>
+        <p class="muted">${esc(S.modules[def.module]?.description || '')}</p>
+        <button class="btn primary" data-toggle-module="${def.module}" data-value="1">Activer</button>
+      </div>`;
+    current = {};
+    return;
+  }
+  page.innerHTML = (def.module ? moduleHead(def) : `<h1>${esc(def.label)}</h1>`) + Page.render();
+  page.firstElementChild?.nextElementSibling?.classList.add('fade-in');
+  Page.bind?.(page);
+  Page.live?.();
+}
+
+function moduleHead(def) {
+  const m = S.modules[def.module];
+  return `<div class="page-head"><h1>${esc(def.label)}</h1><span class="spacer"></span>
+    <label class="row" title="Activer / désactiver cette fonction">
+      <span class="muted">${m && m.enabled ? 'Activé' : 'Désactivé'}</span>
+      <input type="checkbox" class="switch" data-module-switch="${def.module}" ${m && m.enabled ? 'checked' : ''}>
+    </label></div>
+    <p class="page-desc">${esc(m ? m.description : '')}</p>`;
+}
+
+// Délégation d'événements communs
+document.addEventListener('click', e => {
+  if (e.target.matches('input[type=checkbox]')) return;  // un interrupteur ne change pas de page
+  const t = e.target.closest('[data-go],[data-toggle-module],[data-url]');
+  if (!t) return;
+  if (t.dataset.url) window.open(t.dataset.url, '_blank');  // le C++ l'ouvre dans le navigateur
+  if (t.dataset.go) go(t.dataset.go);
+  if (t.dataset.toggleModule) send({ type: 'setModule', id: t.dataset.toggleModule, enabled: t.dataset.value === '1' });
+});
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.moduleSwitch) send({ type: 'setModule', id: t.dataset.moduleSwitch, enabled: t.checked });
+});
+$('#global-switch').addEventListener('change', e => send({ type: 'setGlobal', enabled: e.target.checked }));
+
+function setRangeFill(r) {
+  const p = (r.value - r.min) / (r.max - r.min) * 100;
+  r.style.setProperty('--p', p + '%');
+}
+
+// ------------------------------------------------------------------ Jauge ronde
+
+const G = { cx: 100, cy: 100, r: 84 };
+const ARC_LEN = 0.75 * 2 * Math.PI * G.r;
+function arcPath() {
+  const a0 = 135 * Math.PI / 180, a1 = 45 * Math.PI / 180;
+  const p = a => `${(G.cx + G.r * Math.cos(a)).toFixed(2)} ${(G.cy + G.r * Math.sin(a)).toFixed(2)}`;
+  return `M ${p(a0)} A ${G.r} ${G.r} 0 1 1 ${p(a1)}`;
+}
+function gaugeHTML(id, caption, extra = '') {
+  return `<div class="gauge ${extra}" id="g-${id}">
+    <svg viewBox="0 0 200 184"><path class="track" d="${arcPath()}" stroke-width="15"/>
+    <path class="bar" d="${arcPath()}" stroke-width="15" stroke-dasharray="0 1000"/></svg>
+    <div class="center"><span class="num na">—</span></div>
+    <div class="caption">${esc(caption)}</div></div>`;
+}
+function setGauge(id, pct, { text, unit = '%', hotAt = 80, critAt = 92 } = {}) {
+  const g = document.getElementById('g-' + id);
+  if (!g) return;
+  const bar = $('.bar', g), num = $('.num', g);
+  if (pct == null || isNaN(pct)) {
+    bar.setAttribute('stroke-dasharray', '0 1000'); bar.style.opacity = 0;
+    num.className = 'num na'; num.innerHTML = '—';
+    return;
+  }
+  const p = Math.max(0, Math.min(100, pct));
+  bar.style.opacity = p <= 0.3 ? 0 : 1;
+  bar.setAttribute('stroke-dasharray', `${(ARC_LEN * p / 100).toFixed(1)} 1000`);
+  g.classList.toggle('hot', hotAt != null && p >= hotAt && p < critAt);
+  g.classList.toggle('crit', critAt != null && p >= critAt);
+  num.className = 'num';
+  num.innerHTML = `${esc(text ?? Math.round(p))}<span class="unit">${esc(unit)}</span>`;
+}
+
+// Petit graphique en ligne (historique)
+function chartSVG(series, { max = 100, height = 180 } = {}) {
+  const W = 900, H = height, padL = 44, padB = 6, n = 90;
+  const x = i => padL + (W - padL) * i / (n - 1);
+  const y = v => (H - padB) - (H - padB - 6) * Math.min(v, max) / max;
+  let grid = '';
+  for (const v of [0, 50, 100]) {
+    grid += `<line class="grid-line" x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/>
+      <text class="axis" x="${padL - 8}" y="${y(v) + 4}" text-anchor="end">${v}%</text>`;
+  }
+  const lines = series.map(({ data, cls }) => {
+    const pts = data.map((v, i) => v == null ? null : [x(i + n - data.length), y(v)]).filter(Boolean);
+    if (pts.length < 2) return '';
+    const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ');
+    const area = cls ? '' : `<path class="area" d="${d} L${pts[pts.length - 1][0]} ${y(0)} L${pts[0][0]} ${y(0)} Z"/>`;
+    return `${area}<path class="line ${cls || ''}" d="${d}"/>`;
+  }).join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <defs><linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#7cbcff" stop-opacity=".28"/><stop offset="1" stop-color="#7cbcff" stop-opacity="0"/></linearGradient></defs>
+    ${grid}${lines}</svg>`;
+}
+
+// ------------------------------------------------------------------ Accueil
+
+const HomePage = {
+  render() {
+    const enabledCount = S.order.filter(id => modOn(id)).length;
+    const on = S.app.enabled;
+    const monOn = modOn('monitor');
+    const tiles = S.order.map(id => {
+      const m = S.modules[id];
+      const def = PAGES.find(p => p.module === id) || {};
+      return `<div class="card tight" style="cursor:pointer" data-go="${def.id}">
+        <div class="row">${icon(def.icon || 'apps')}<h3 style="margin:0">${esc(m.name)}</h3><span class="spacer"></span>
+          <input type="checkbox" class="switch" data-module-switch="${id}" ${m.enabled ? 'checked' : ''}></div>
+        <div class="muted small" style="margin-top:8px">${esc(HomePage.tileInfo(id))}</div>
+      </div>`;
+    }).join('');
+
+    return `
+    <div class="card">
+      <div class="hero">
+        <div>${monOn ? gaugeHTML('home-cpu', 'Processeur') : '<div class="empty">' + icon('monitor') + '<div>Moniteur désactivé</div></div>'}</div>
+        <div>
+          <div class="row wrap">
+            <span class="pill ${on ? 'ok' : 'warn'}"><span class="led"></span>${on ? `Actif · ${enabledCount} fonction${enabledCount > 1 ? 's' : ''} sur ${S.order.length}` : 'En pause'}</span>
+            ${S.update && S.update.status === 'available' ? `<span class="pill" data-go="updates" style="cursor:pointer">${icon('update')} Mise à jour ${esc(S.update.latest)}</span>` : ''}
+          </div>
+          <div class="hero-stats">
+            <div><div class="label">Mémoire</div><div class="value" id="h-ram">—</div></div>
+            <div><div class="label">Disque</div><div class="value" id="h-disk">—</div></div>
+            <div><div class="label">Batterie</div><div class="value" id="h-bat">—</div></div>
+            <div><div class="label">Réseau ↓ / ↑</div><div class="value" id="h-net">—</div></div>
+          </div>
+          <div class="row wrap">
+            <button class="btn primary big" data-go="monitor">Ouvrir le moniteur</button>
+            <button class="btn big" data-go="clipboard">${icon('clipboard')} Presse-papiers</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <h2 style="margin-top:28px">Fonctions</h2>
+    <div class="grid grid-3">${tiles}</div>`;
+  },
+  tileInfo(id) {
+    const s = modState(id);
+    switch (id) {
+      case 'enter_guard': return `${s.corrections || 0} correction${s.corrections > 1 ? 's' : ''} · touche ${s.keyName || '?'}`;
+      case 'clipboard': return `${(s.items || []).length} élément(s) mémorisé(s)`;
+      case 'app_launcher': return `${(s.groups || []).length} groupe(s)`;
+      case 'place_launcher': {
+        const here = (s.rules || []).filter(r => r.inside).map(r => r.place).filter(Boolean);
+        return `${(s.rules || []).length} lieu(x)` + (here.length ? ` · sur place : ${here.join(', ')}` : '');
+      }
+      case 'monitor': return live.monitor ? `Processeur ${Math.round(live.monitor.cpu)} %` : 'Processeur, mémoire, disque, batterie';
+      case 'converter': return 'Longueur, masse, température, devises…';
+      case 'processes': return `${(s.useless || []).length} marqué(s) inutile(s) · ${(s.stopped || []).length} à relancer`;
+      default: return S.modules[id].description;
+    }
+  },
+  live() {
+    const m = live.monitor;
+    if (!m) return;
+    setGauge('home-cpu', m.cpu);
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('h-ram', m.ram ? `${Math.round(100 * m.ram.used / m.ram.total)} %` : '—');
+    set('h-disk', m.disk ? `${Math.round(100 * m.disk.used / m.disk.total)} %` : '—');
+    set('h-bat', m.battery ? `${m.battery.percent} %${m.battery.charging ? ' ⚡' : ''}` : 'Secteur');
+    set('h-net', m.net ? `${fmtSpeed(m.net.down)}` : '—');
+  },
+};
+
+// ------------------------------------------------------------------ Moniteur
+
+const MonitorPage = {
+  render() {
+    return `
+    <div class="grid grid-4">
+      <div class="card gauge-card">${gaugeHTML('cpu', 'Processeur', 'small')}<div class="detail" id="d-cpu"></div></div>
+      <div class="card gauge-card">${gaugeHTML('ram', 'Mémoire', 'small')}<div class="detail" id="d-ram"></div></div>
+      <div class="card gauge-card">${gaugeHTML('disk', 'Disque', 'small')}<div class="detail" id="d-disk"></div></div>
+      <div class="card gauge-card">${gaugeHTML('bat', 'Batterie', 'small')}<div class="detail" id="d-bat"></div></div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <div class="row"><h2 style="margin:0">Dernières 90 secondes</h2><span class="spacer"></span>
+        <div class="legend"><span><i style="background:var(--accent)"></i>Processeur</span><span><i style="background:#f2a93b"></i>Mémoire</span></div></div>
+      <div id="chart" style="margin-top:14px"></div>
+    </div>
+    <div class="grid grid-3">
+      <div class="card tight"><div class="label">Téléchargement</div><div class="value" id="m-down">—</div></div>
+      <div class="card tight"><div class="label">Envoi</div><div class="value" id="m-up">—</div></div>
+      <div class="card tight"><div class="label">Allumé depuis</div><div class="value" id="m-uptime">—</div></div>
+    </div>`;
+  },
+  live() {
+    const m = live.monitor;
+    if (!m) return;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    setGauge('cpu', m.cpu);
+    set('d-cpu', `${m.cores} cœurs logiques`);
+    if (m.ram) {
+      setGauge('ram', 100 * m.ram.used / m.ram.total);
+      set('d-ram', `${fmtBytes(m.ram.used)} / ${fmtBytes(m.ram.total)}`);
+    }
+    if (m.disk) {
+      setGauge('disk', 100 * m.disk.used / m.disk.total, { hotAt: 85, critAt: 95 });
+      set('d-disk', `${m.disk.drive} · ${fmtBytes(m.disk.total - m.disk.used)} libres`);
+    }
+    if (m.battery) {
+      setGauge('bat', m.battery.percent, { hotAt: null, critAt: null });
+      const g = document.getElementById('g-bat');
+      if (g) g.classList.toggle('crit', !m.battery.charging && m.battery.percent <= 15);
+      const left = m.battery.secondsLeft > 0 ? ` · ${fmtDuration(m.battery.secondsLeft)} restantes` : '';
+      set('d-bat', (m.battery.charging ? 'En charge ⚡' : 'Sur batterie') + left + (m.battery.saver ? ' · économie' : ''));
+    } else {
+      setGauge('bat', null);
+      set('d-bat', 'Pas de batterie (secteur)');
+    }
+    set('m-down', m.net ? fmtSpeed(m.net.down) : '—');
+    set('m-up', m.net ? fmtSpeed(m.net.up) : '—');
+    set('m-uptime', fmtDuration(m.uptime));
+    const c = document.getElementById('chart');
+    if (c) c.innerHTML = chartSVG([{ data: hist.cpu }, { data: hist.ram, cls: 'alt' }]);
+  },
+};
+
+// ------------------------------------------------------------------ Programmes
+
+let procData = null;
+let procQuery = '';
+let procSort = 'ram';
+let procWatchTimer = null;
+
+const ProcessesPage = {
+  render() {
+    return `
+    <div id="pm-top"></div>
+    <div class="row" style="margin:22px 0 12px">
+      <div style="position:relative;flex:1">
+        <input type="search" id="pm-search" placeholder="Rechercher un programme…" value="${esc(procQuery)}" style="padding-left:38px">
+        <span style="position:absolute;left:11px;top:10px;color:var(--text-3)">${icon('search')}</span>
+      </div>
+      <select id="pm-sort" style="width:190px">
+        <option value="ram" ${procSort === 'ram' ? 'selected' : ''}>Trier par mémoire</option>
+        <option value="cpu" ${procSort === 'cpu' ? 'selected' : ''}>Trier par processeur</option>
+        <option value="name" ${procSort === 'name' ? 'selected' : ''}>Trier par nom</option>
+      </select>
+    </div>
+    <div class="list" id="pm-list"><div class="card empty">Chargement de la liste…</div></div>
+    <div id="pm-stopped"></div>
+    <p class="faint small" style="margin-top:18px">🔒 Les programmes de Windows sont cachés et protégés. « Arrêter » ferme proprement (comme ✕) ; « Forcer » arrête immédiatement (le travail non enregistré est perdu).</p>`;
+  },
+  bind(root) {
+    const watch = () => { if (current === ProcessesPage && modOn('processes')) moduleAction('processes', 'watch'); else { clearInterval(procWatchTimer); procWatchTimer = null; } };
+    clearInterval(procWatchTimer);
+    procWatchTimer = setInterval(watch, 3000);
+    watch();
+    $('#pm-search', root).addEventListener('input', e => { procQuery = e.target.value; this.renderList(); });
+    $('#pm-sort', root).addEventListener('change', e => { procSort = e.target.value; this.renderList(); });
+    root.addEventListener('click', e => {
+      const b = e.target.closest('[data-pm]');
+      if (!b) return;
+      const act = b.dataset.pm, key = b.dataset.key;
+      if (act === 'stopUseless') { moduleAction('processes', 'stopUseless'); toast('Mode léger activé'); }
+      else if (act === 'relaunchAll') moduleAction('processes', 'relaunchAll');
+      else moduleAction('processes', act, { key });
+      if (act === 'stop' || act === 'forceStop') { b.disabled = true; b.textContent = '…'; }
+    });
+    this.update();
+  },
+  update() { this.renderTop(); this.renderList(); this.renderStopped(); },
+  live() { this.renderTop(); this.renderList(); },
+  renderTop() {
+    const el = document.getElementById('pm-top');
+    if (!el) return;
+    const s = modState('processes');
+    const progs = procData ? procData.programs : [];
+    const uselessRunning = progs.filter(p => p.useless);
+    const ram = uselessRunning.reduce((a, p) => a + p.ram, 0);
+    const total = progs.reduce((a, p) => a + p.ram, 0);
+    el.innerHTML = `
+    ${s.lastEvent ? `<div class="banner info">${icon('info')}<div class="text">${esc(s.lastEvent)}</div></div>` : ''}
+    <div class="card">
+      <div class="row wrap" style="gap:40px">
+        <div><div class="label">Programmes ouverts</div><div class="value big">${procData ? progs.length : '—'}</div></div>
+        <div><div class="label">Mémoire utilisée par eux</div><div class="value big">${procData ? fmtBytes(total) : '—'}</div></div>
+        <div><div class="label">Inutiles ouverts</div><div class="value big">${uselessRunning.length}${ram ? `<span class="muted" style="font-size:16px;font-weight:500"> · ${fmtBytes(ram)}</span>` : ''}</div></div>
+        <span class="spacer"></span>
+        <div class="row wrap">
+          <button class="btn primary big" data-pm="stopUseless" ${uselessRunning.length ? '' : 'disabled'}>${icon('leaf')} Mode léger</button>
+          <button class="btn big" data-pm="relaunchAll" ${(s.stopped || []).length ? '' : 'disabled'}>${icon('update')} Tout relancer</button>
+        </div>
+      </div>
+      <div class="faint small" style="margin-top:14px">Clique sur ★ pour marquer un programme comme inutile. « Mode léger » les arrête tous d'un coup.</div>
+    </div>`;
+  },
+  renderList() {
+    const el = document.getElementById('pm-list');
+    if (!el || !procData) return;
+    const q = procQuery.trim().toLowerCase();
+    let progs = procData.programs.filter(p => !q || (p.name + ' ' + p.exe + ' ' + p.title).toLowerCase().includes(q));
+    progs.sort(procSort === 'name' ? (a, b) => a.name.localeCompare(b.name, 'fr') : procSort === 'cpu' ? (a, b) => b.cpu - a.cpu : (a, b) => b.ram - a.ram);
+    if (!progs.length) { el.innerHTML = `<div class="card empty">${q ? 'Aucun résultat' : 'Aucun programme à afficher'}</div>`; return; }
+    el.innerHTML = progs.map(p => `
+      <div class="list-item">
+        <button class="btn ghost icon-only" data-pm="toggleUseless" data-key="${esc(p.key)}" title="${p.useless ? 'Retirer des inutiles' : 'Marquer comme inutile'}" style="color:${p.useless ? 'var(--warn)' : 'var(--text-3)'}">
+          <svg class="icon" viewBox="0 0 24 24" style="${p.useless ? 'fill:currentColor' : ''}"><path d="${ICONS.star}"/></svg></button>
+        <div class="main">
+          <div class="row" style="gap:8px"><b class="ellipsis">${esc(p.name)}</b>${p.count > 1 ? `<span class="chip">${p.count} processus</span>` : ''}${p.windowed ? '' : '<span class="chip">arrière-plan</span>'}</div>
+          <div class="faint small ellipsis" title="${esc(p.path)}">${esc(p.title || p.exe)}</div>
+        </div>
+        <div style="width:90px;text-align:right"><div class="faint small">Mémoire</div><b>${fmtBytes(p.ram)}</b></div>
+        <div style="width:70px;text-align:right"><div class="faint small">CPU</div><b>${nf1.format(p.cpu)} %</b></div>
+        <div class="actions" style="opacity:1">
+          <button class="btn" data-pm="stop" data-key="${esc(p.key)}">${icon('stop')} Arrêter</button>
+          <button class="btn ghost icon-only danger" data-pm="forceStop" data-key="${esc(p.key)}" title="Forcer l'arrêt">${icon('close')}</button>
+        </div>
+      </div>`).join('');
+  },
+  renderStopped() {
+    const el = document.getElementById('pm-stopped');
+    if (!el) return;
+    const st = modState('processes').stopped || [];
+    el.innerHTML = st.length ? `
+      <div class="section-title">Arrêtés récemment</div>
+      <div class="list">${st.map(x => `
+        <div class="list-item">${icon('stop')}
+          <div class="main"><b>${esc(x.name)}</b><div class="faint small ellipsis">${esc(x.path)} · ${fmtAgo(x.time)}</div></div>
+          <button class="btn primary" data-pm="relaunch" data-key="${esc(x.path.toLowerCase())}">${icon('play')} Relancer</button>
+          <button class="btn ghost icon-only" data-pm="forget" data-key="${esc(x.path.toLowerCase())}" title="Retirer de la liste">${icon('close')}</button>
+        </div>`).join('')}</div>` : '';
+  },
+};
+
+// ------------------------------------------------------------------ Garde Enter
+
+const EnterGuardPage = {
+  render() {
+    const s = modState('enter_guard');
+    return `
+    <div class="card">
+      <div class="hero" style="grid-template-columns:auto 1fr">
+        <div style="text-align:center;padding:0 20px">
+          <div class="keycap ${s.capturing ? 'listening' : ''}" style="min-width:96px;height:96px;font-size:40px">${s.capturing ? '…' : esc(s.keyName || '?')}</div>
+          <div class="muted" style="margin-top:12px">Touche surveillée</div>
+        </div>
+        <div>
+          <div class="label">Frappes accidentelles corrigées</div>
+          <div class="value big" style="font-size:56px">${nf0.format(s.corrections || 0)}</div>
+          <div class="row wrap" style="margin-top:18px">
+            ${s.capturing
+              ? `<span class="pill warn"><span class="led"></span>Appuie sur la touche à surveiller… (Échap pour annuler)</span>
+                 <button class="btn" id="eg-cancel">Annuler</button>`
+              : `<button class="btn primary" id="eg-capture">${icon('keyboard')} Choisir une autre touche</button>
+                 ${s.isDefaultKey ? '' : '<button class="btn" id="eg-reset-key">Touche par défaut</button>'}`}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card tight">
+        <h3><kbd class="small">${esc(s.keyName || '?')}</kbd> puis <kbd class="small">Enter</kbd> trop vite</h3>
+        <div class="muted">Enter est retenu, la touche est effacée, puis Enter est envoyé. Le message part sans le caractère en trop.</div>
+      </div>
+      <div class="card tight">
+        <h3><kbd class="small">Enter</kbd> puis <kbd class="small">${esc(s.keyName || '?')}</kbd> trop vite</h3>
+        <div class="muted">La touche est simplement bloquée : elle n'apparaît jamais.</div>
+      </div>
+    </div>
+
+    <div class="section-title">Réglages</div>
+    <div class="setting">
+      ${icon('info')}
+      <div class="text"><div class="title">Délai de détection</div>
+        <div class="desc">En dessous de ce délai entre les deux touches, c'est considéré comme un accident. Les touches enfoncées en même temps sont toujours corrigées.</div></div>
+      <div style="width:260px" class="row"><input type="range" id="eg-threshold" min="20" max="250" step="5" value="${s.thresholdMs || 80}"><b id="eg-threshold-v" style="width:64px;text-align:right">${s.thresholdMs || 80} ms</b></div>
+    </div>
+    <div class="setting" style="align-items:flex-start">
+      ${icon('apps')}
+      <div class="text"><div class="title">Apps exclues</div>
+        <div class="desc">Une par ligne, ex. <span class="mono">valorant.exe</span>. La Garde Enter ne fait rien dans ces apps (utile pour les jeux).</div></div>
+      <textarea id="eg-exclusions" style="width:260px" placeholder="jeu.exe">${esc((s.exclusions || []).join('\n'))}</textarea>
+    </div>
+    <div class="setting">
+      ${icon('trash')}
+      <div class="text"><div class="title">Remettre le compteur à zéro</div></div>
+      <button class="btn" id="eg-reset-stats">Réinitialiser</button>
+    </div>`;
+  },
+  bind(root) {
+    const r = $('#eg-threshold', root);
+    setRangeFill(r);
+    r.addEventListener('input', () => { $('#eg-threshold-v').textContent = r.value + ' ms'; setRangeFill(r); });
+    r.addEventListener('change', () => moduleAction('enter_guard', 'setThreshold', { value: +r.value }));
+    $('#eg-exclusions', root).addEventListener('change', e => {
+      const list = e.target.value.split(/\n+/).map(x => x.trim().toLowerCase()).filter(Boolean);
+      moduleAction('enter_guard', 'setExclusions', { list });
+      toast('Apps exclues enregistrées');
+    });
+    $('#eg-capture', root)?.addEventListener('click', () => moduleAction('enter_guard', 'captureKey'));
+    $('#eg-cancel', root)?.addEventListener('click', () => moduleAction('enter_guard', 'cancelCapture'));
+    $('#eg-reset-key', root)?.addEventListener('click', () => moduleAction('enter_guard', 'resetKey'));
+    $('#eg-reset-stats', root).addEventListener('click', () => moduleAction('enter_guard', 'resetStats'));
+  },
+};
+
+// ------------------------------------------------------------------ Presse-papiers
+
+let clipQuery = '';
+const ClipboardPage = {
+  render() {
+    const s = modState('clipboard');
+    return `
+    <div class="row" style="margin-bottom:14px">
+      <div style="position:relative;flex:1">
+        <input type="search" id="clip-search" placeholder="Rechercher dans l'historique…" value="${esc(clipQuery)}" style="padding-left:38px">
+        <span style="position:absolute;left:11px;top:10px;color:var(--text-3)">${icon('search')}</span>
+      </div>
+      <button class="btn" id="clip-clear">${icon('trash')} Tout effacer</button>
+    </div>
+    <div class="list" id="clip-list"></div>
+
+    <div class="section-title">Réglages</div>
+    <div class="setting">${icon('folder')}
+      <div class="text"><div class="title">Garder l'historique après un redémarrage</div>
+        <div class="desc">Sinon, seuls les éléments épinglés sont conservés. Les mots de passe copiés depuis un gestionnaire sont toujours ignorés.</div></div>
+      <input type="checkbox" class="switch" id="clip-keep" ${s.keepAfterRestart ? 'checked' : ''}>
+    </div>
+    <div class="setting">${icon('clipboard')}
+      <div class="text"><div class="title">Nombre d'éléments maximum</div></div>
+      <select id="clip-max" style="width:120px">${[25, 50, 100, 200, 500].map(n => `<option ${n === s.maxItems ? 'selected' : ''}>${n}</option>`).join('')}</select>
+    </div>`;
+  },
+  bind(root) {
+    $('#clip-search', root).addEventListener('input', e => { clipQuery = e.target.value; ClipboardPage.renderList(); });
+    $('#clip-clear', root).addEventListener('click', () => moduleAction('clipboard', 'clear'));
+    $('#clip-keep', root).addEventListener('change', e => moduleAction('clipboard', 'setKeep', { value: e.target.checked }));
+    $('#clip-max', root).addEventListener('change', e => moduleAction('clipboard', 'setMax', { value: +e.target.value }));
+    $('#clip-list', root).addEventListener('click', e => {
+      const item = e.target.closest('[data-id]');
+      if (!item) return;
+      const id = +item.dataset.id;
+      const act = e.target.closest('[data-act]')?.dataset.act || 'copy';
+      moduleAction('clipboard', act, { id });
+      if (act === 'copy') toast('Copié !');
+    });
+    this.renderList();
+  },
+  update() { this.renderList(); },
+  renderList() {
+    const el = document.getElementById('clip-list');
+    if (!el) return;
+    const q = clipQuery.trim().toLowerCase();
+    const items = (modState('clipboard').items || []).filter(i => !q || i.text.toLowerCase().includes(q));
+    const pinned = items.filter(i => i.pinned), rest = items.filter(i => !i.pinned);
+    if (!items.length) {
+      el.innerHTML = `<div class="card empty">${icon('clipboard')}<div>${q ? 'Aucun résultat' : 'Copie du texte (Ctrl + C) : il apparaîtra ici.'}</div></div>`;
+      return;
+    }
+    el.innerHTML = [...pinned, ...rest].map(i => `
+      <div class="list-item clip-item ${i.pinned ? 'pinned' : ''}" data-id="${i.id}">
+        <div class="main" title="Cliquer pour copier">
+          <div class="clip-text" data-act="copy">${esc(i.text.length > 600 ? i.text.slice(0, 600) + '…' : i.text)}</div>
+          <div class="clip-meta">${i.pinned ? '📌 Épinglé · ' : ''}${fmtAgo(i.time)} · ${nf0.format(i.text.length)} caractère${i.text.length > 1 ? 's' : ''}</div>
+        </div>
+        <div class="actions">
+          <button class="btn ghost icon-only" data-act="copy" title="Copier">${icon('copy')}</button>
+          <button class="btn ghost icon-only" data-act="pin" title="${i.pinned ? 'Désépingler' : 'Épingler'}" style="${i.pinned ? 'color:var(--accent)' : ''}">${icon('pin')}</button>
+          <button class="btn ghost icon-only" data-act="delete" title="Supprimer">${icon('trash')}</button>
+        </div>
+      </div>`).join('');
+  },
+};
+
+// ------------------------------------------------------------------ Convertisseur
+
+const UNITS = {
+  length: { label: 'Longueur', units: { mm: ['Millimètre', 0.001], cm: ['Centimètre', 0.01], m: ['Mètre', 1], km: ['Kilomètre', 1000], in: ['Pouce', 0.0254], ft: ['Pied', 0.3048], yd: ['Verge', 0.9144], mi: ['Mille', 1609.344] }, def: ['cm', 'in'] },
+  mass: { label: 'Masse', units: { mg: ['Milligramme', 1e-6], g: ['Gramme', 0.001], kg: ['Kilogramme', 1], t: ['Tonne', 1000], oz: ['Once', 0.028349523125], lb: ['Livre', 0.45359237] }, def: ['kg', 'lb'] },
+  temp: { label: 'Température', units: { c: ['Celsius (°C)'], f: ['Fahrenheit (°F)'], k: ['Kelvin (K)'] }, def: ['c', 'f'] },
+  volume: { label: 'Volume', units: { ml: ['Millilitre', 0.001], l: ['Litre', 1], m3: ['Mètre cube', 1000], tsp: ['Cuillère à thé', 0.00492892], tbsp: ['Cuillère à soupe', 0.0147868], cup: ['Tasse (US)', 0.2365882], gal: ['Gallon (US)', 3.785411784] }, def: ['l', 'gal'] },
+  speed: { label: 'Vitesse', units: { ms: ['Mètre/seconde', 1], kmh: ['Kilomètre/heure', 1 / 3.6], mph: ['Mille/heure', 0.44704], kn: ['Nœud', 0.514444] }, def: ['kmh', 'mph'] },
+  area: { label: 'Aire', units: { cm2: ['cm²', 1e-4], m2: ['m²', 1], ha: ['Hectare', 1e4], km2: ['km²', 1e6], ft2: ['pi²', 0.09290304], ac: ['Acre', 4046.8564224] }, def: ['m2', 'ft2'] },
+  data: { label: 'Données', units: { o: ['Octet', 1], ko: ['Ko', 1e3], mo: ['Mo', 1e6], go: ['Go', 1e9], to: ['To', 1e12], kio: ['Kio', 1024], mio: ['Mio', 1048576], gio: ['Gio', 1073741824] }, def: ['go', 'mo'] },
+  time: { label: 'Temps', units: { ms: ['Milliseconde', 0.001], s: ['Seconde', 1], min: ['Minute', 60], h: ['Heure', 3600], d: ['Jour', 86400], w: ['Semaine', 604800], y: ['Année', 31557600] }, def: ['h', 'min'] },
+  money: { label: 'Devises', units: {}, def: ['CAD', 'USD'] },
+};
+const CURRENCIES = { CAD: 'Dollar canadien', USD: 'Dollar américain', EUR: 'Euro', GBP: 'Livre sterling', JPY: 'Yen japonais', CHF: 'Franc suisse', AUD: 'Dollar australien', MXN: 'Peso mexicain', CNY: 'Yuan chinois', KRW: 'Won sud-coréen', INR: 'Roupie indienne', BRL: 'Réal brésilien', SEK: 'Couronne suédoise' };
+UNITS.money.units = Object.fromEntries(Object.entries(CURRENCIES).map(([k, v]) => [k, [`${k} — ${v}`]]));
+
+const conv = { cat: 'length', from: null, to: null, value: '1', rates: null, ratesDate: null, loading: false };
+
+function convert(cat, from, to, v) {
+  if (cat === 'temp') {
+    const c = from === 'c' ? v : from === 'f' ? (v - 32) * 5 / 9 : v - 273.15;
+    return to === 'c' ? c : to === 'f' ? c * 9 / 5 + 32 : c + 273.15;
+  }
+  if (cat === 'money') {
+    if (!conv.rates) return NaN;
+    const rf = from === 'EUR' ? 1 : conv.rates[from], rt = to === 'EUR' ? 1 : conv.rates[to];
+    return v / rf * rt;
+  }
+  const u = UNITS[cat].units;
+  return v * u[from][1] / u[to][1];
+}
+function fmtNum(x, cat) {
+  if (!isFinite(x)) return '';
+  if (cat === 'money') return x.toLocaleString('fr-CA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (x !== 0 && (Math.abs(x) >= 1e12 || Math.abs(x) < 1e-6)) return x.toExponential(4).replace('.', ',');
+  return x.toLocaleString('fr-CA', { maximumSignificantDigits: 10, useGrouping: true });
+}
+function parseNum(s) { return parseFloat(String(s).replace(/\s|\u202f|\u00a0/g, '').replace(',', '.')); }
+
+async function loadRates() {
+  if (conv.loading) return;
+  conv.loading = true;
+  const urls = ['https://api.frankfurter.dev/v1/latest?base=EUR', 'https://api.frankfurter.app/latest?from=EUR'];
+  for (const url of urls) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      const j = await r.json();
+      conv.rates = j.rates; conv.ratesDate = j.date;
+      moduleAction('converter', 'setPref', { key: 'rates', value: { rates: j.rates, date: j.date } });
+      break;
+    } catch { /* essai suivant */ }
+  }
+  conv.loading = false;
+  if (current === ConverterPage) ConverterPage.compute();
+}
+
+const ConverterPage = {
+  render() {
+    const prefs = modState('converter');
+    if (!conv.from && prefs.cat && UNITS[prefs.cat]) { conv.cat = prefs.cat; }
+    if (!conv.rates && prefs.rates) { conv.rates = prefs.rates.rates; conv.ratesDate = prefs.rates.date; }
+    const cat = UNITS[conv.cat];
+    if (!conv.from || !cat.units[conv.from]) conv.from = cat.def[0];
+    if (!conv.to || !cat.units[conv.to]) conv.to = cat.def[1];
+    const opts = sel => Object.entries(cat.units).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(v[0])}</option>`).join('');
+    return `
+    <div class="tabs">${Object.entries(UNITS).map(([k, v]) => `<button class="tab ${k === conv.cat ? 'active' : ''}" data-cat="${k}">${esc(v.label)}</button>`).join('')}</div>
+    <div class="card">
+      <div class="conv">
+        <div><div class="label">De</div><input type="text" id="cv-in" value="${esc(conv.value)}" inputmode="decimal"><select id="cv-from">${opts(conv.from)}</select></div>
+        <button class="btn icon-only" id="cv-swap" title="Inverser" style="margin-bottom:46px">${icon('swap')}</button>
+        <div><div class="label">Vers</div><input type="text" id="cv-out" readonly><select id="cv-to">${opts(conv.to)}</select></div>
+      </div>
+      <div class="muted small" id="cv-note" style="margin-top:16px"></div>
+    </div>`;
+  },
+  bind(root) {
+    $$('[data-cat]', root).forEach(b => b.addEventListener('click', () => {
+      conv.cat = b.dataset.cat; conv.from = conv.to = null;
+      moduleAction('converter', 'setPref', { key: 'cat', value: conv.cat });
+      renderPage(true);
+    }));
+    $('#cv-in', root).addEventListener('input', e => { conv.value = e.target.value; this.compute(); });
+    $('#cv-from', root).addEventListener('change', e => { conv.from = e.target.value; this.compute(); });
+    $('#cv-to', root).addEventListener('change', e => { conv.to = e.target.value; this.compute(); });
+    $('#cv-swap', root).addEventListener('click', () => {
+      [conv.from, conv.to] = [conv.to, conv.from];
+      $('#cv-from').value = conv.from; $('#cv-to').value = conv.to;
+      this.compute();
+    });
+    if (conv.cat === 'money' && (!conv.rates || conv.ratesDate !== new Date().toISOString().slice(0, 10))) loadRates();
+    this.compute();
+    $('#cv-in', root).focus();
+    $('#cv-in', root).select();
+  },
+  compute() {
+    const out = document.getElementById('cv-out'), note = document.getElementById('cv-note');
+    if (!out) return;
+    const v = parseNum(conv.value);
+    out.value = isNaN(v) ? '' : fmtNum(convert(conv.cat, conv.from, conv.to, v), conv.cat);
+    if (conv.cat === 'money') {
+      note.textContent = conv.rates
+        ? `Taux de la Banque centrale européenne du ${conv.ratesDate}. 1 ${conv.from} = ${fmtNum(convert('money', conv.from, conv.to, 1), 'x')} ${conv.to}`
+        : conv.loading ? 'Chargement des taux…' : 'Taux indisponibles (pas de connexion ?)';
+    } else if (!isNaN(v)) {
+      note.textContent = `1 ${UNITS[conv.cat].units[conv.from][0]} = ${fmtNum(convert(conv.cat, conv.from, conv.to, 1), conv.cat)} ${UNITS[conv.cat].units[conv.to][0]}`;
+    } else note.textContent = '';
+  },
+};
+
+// ------------------------------------------------------------------ Raccourcis d'apps
+
+const AppLauncherPage = {
+  render() {
+    const s = modState('app_launcher');
+    const groups = s.groups || [];
+    return `
+    ${s.lastEvent ? `<div class="banner info">${icon('info')}<div class="text">${esc(s.lastEvent)}</div></div>` : ''}
+    <div class="grid grid-3">
+      ${groups.map(g => `
+        <div class="card group-card">
+          <div class="row"><span class="group-emoji">${esc(g.emoji || '🚀')}</span><span class="spacer"></span>
+            <button class="btn ghost icon-only" data-edit="${g.id}" title="Modifier">${icon('edit')}</button></div>
+          <div><h3 style="font-size:18px">${esc(g.name || 'Sans nom')}</h3>
+            <div class="group-items">${g.items.slice(0, 6).map(i => `<span class="chip ellipsis" title="${esc(i)}">${esc(/^https?:/.test(i) ? i.replace(/^https?:\/\/(www\.)?/, '').split('/')[0] : fileName(i))}</span>`).join('')}${g.items.length > 6 ? `<span class="chip">+${g.items.length - 6}</span>` : ''}</div></div>
+          <button class="btn primary" data-launch="${g.id}" ${g.items.length ? '' : 'disabled'}>${icon('play')} Lancer</button>
+        </div>`).join('')}
+      <button class="card group-card empty" id="al-new" style="cursor:pointer;border-style:dashed;color:var(--text-2);font:inherit">
+        ${icon('plus')}<div style="font-weight:600">Nouveau groupe</div><div class="small">Ex. « Devoirs » : Word + Chrome + Calculatrice</div>
+      </button>
+    </div>`;
+  },
+  bind(root) {
+    $('#al-new', root).addEventListener('click', () => this.edit(null));
+    $$('[data-edit]', root).forEach(b => b.addEventListener('click', () => this.edit(b.dataset.edit)));
+    $$('[data-launch]', root).forEach(b => b.addEventListener('click', () => { moduleAction('app_launcher', 'launchGroup', { id: b.dataset.launch }); toast('Lancement…'); }));
+  },
+  edit(id) {
+    const existing = (modState('app_launcher').groups || []).find(g => g.id === id);
+    const g = existing ? JSON.parse(JSON.stringify(existing)) : { id: '', name: '', emoji: '🚀', items: [] };
+    const dlg = $('#dialog');
+    const draw = () => {
+      dlg.innerHTML = `
+      <div class="dlg-body">
+        <h2>${existing ? 'Modifier le groupe' : 'Nouveau groupe'}</h2>
+        <div class="row">
+          <label class="field" style="width:90px"><span>Emoji</span><input type="text" id="g-emoji" value="${esc(g.emoji)}" maxlength="4" style="text-align:center;font-size:20px"></label>
+          <label class="field" style="flex:1"><span>Nom</span><input type="text" id="g-name" value="${esc(g.name)}" placeholder="Ex. Devoirs"></label>
+        </div>
+        <div class="field"><span>Apps, fichiers et sites</span>
+          <div class="list">${g.items.length ? g.items.map((it, i) => `
+            <div class="list-item" style="padding:8px 12px">${icon(/^https?:/.test(it) ? 'link' : 'file')}
+              <div class="main ellipsis" title="${esc(it)}">${esc(/^https?:/.test(it) ? it : fileName(it))}<div class="faint small ellipsis">${esc(/^https?:/.test(it) ? '' : it)}</div></div>
+              <button class="btn ghost icon-only" data-rm="${i}" title="Retirer">${icon('close')}</button></div>`).join('')
+            : '<div class="faint small">Aucun élément pour l\'instant.</div>'}</div>
+        </div>
+        <div class="row wrap">
+          <button class="btn" id="g-add-file">${icon('file')} Ajouter une app ou un fichier</button>
+          <div class="row" style="flex:1;min-width:240px"><input type="text" id="g-url" placeholder="https://…"><button class="btn" id="g-add-url">${icon('link')} Ajouter</button></div>
+        </div>
+      </div>
+      <div class="dlg-foot">
+        ${existing ? `<button class="btn danger left" id="g-del">${icon('trash')} Supprimer</button>` : ''}
+        <button class="btn" id="g-cancel">Annuler</button>
+        <button class="btn primary" id="g-save">Enregistrer</button>
+      </div>`;
+      const keep = () => { g.name = $('#g-name', dlg).value; g.emoji = $('#g-emoji', dlg).value; };
+      $$('[data-rm]', dlg).forEach(b => b.addEventListener('click', () => { keep(); g.items.splice(+b.dataset.rm, 1); draw(); }));
+      $('#g-add-file', dlg).addEventListener('click', async () => { keep(); const p = await pickFile(); if (p) { g.items.push(p); draw(); } });
+      $('#g-add-url', dlg).addEventListener('click', () => {
+        keep();
+        let u = $('#g-url', dlg).value.trim();
+        if (!u) return;
+        if (!/^https?:\/\//.test(u)) u = 'https://' + u;
+        g.items.push(u); draw();
+      });
+      $('#g-cancel', dlg).addEventListener('click', () => dlg.close());
+      $('#g-del', dlg)?.addEventListener('click', () => { moduleAction('app_launcher', 'deleteGroup', { id: g.id }); dlg.close(); });
+      $('#g-save', dlg).addEventListener('click', () => {
+        keep();
+        if (!g.name.trim()) { $('#g-name', dlg).focus(); return; }
+        moduleAction('app_launcher', 'saveGroup', { group: g });
+        dlg.close();
+      });
+    };
+    draw();
+    dlg.showModal();
+    dlg.addEventListener('close', () => renderPage(true), { once: true });
+  },
+};
+
+// ------------------------------------------------------------------ Lancement par lieu
+
+const PlacePage = {
+  render() {
+    const s = modState('place_launcher');
+    const rules = s.rules || [];
+    const pos = s.position;
+    const warnLoc = s.wifiError === 'locationDenied' || s.gpsError === 'denied';
+    return `
+    ${warnLoc ? `<div class="banner">${icon('info')}<div class="text"><b>Windows bloque l'accès à la position.</b> Active « Services de localisation » et « Autoriser les applications de bureau à accéder à votre position ». Depuis Windows 11 24H2, c'est aussi nécessaire pour lire le nom du Wi-Fi.</div>
+      <button class="btn" data-open-settings="location">Ouvrir les paramètres</button></div>` : ''}
+    ${s.lastEvent ? `<div class="banner info">${icon('info')}<div class="text">${esc(s.lastEvent)}</div></div>` : ''}
+
+    <div class="grid grid-2">
+      <div class="card tight">
+        <div class="row">${icon('wifi')}<h3 style="margin:0">Wi-Fi</h3></div>
+        <div style="margin-top:10px" class="row wrap">${(s.connected || []).length
+          ? s.connected.map(n => `<span class="chip ok">${esc(n)}</span>`).join('')
+          : `<span class="faint">${s.wifiError === 'noWifi' ? 'Aucune carte Wi-Fi' : 'Non connecté'}</span>`}</div>
+      </div>
+      <div class="card tight">
+        <div class="row">${icon('gps')}<h3 style="margin:0">Position</h3><span class="spacer"></span>
+          <button class="btn ghost" id="pl-locate">${icon('update')} Actualiser</button></div>
+        <div style="margin-top:4px" class="muted">${pos
+          ? `${pos.lat.toFixed(5)}, ${pos.lon.toFixed(5)} · précision ± ${nf0.format(pos.accuracy)} m · ${fmtAgo(pos.time)}`
+          : s.gpsError === 'unavailable' ? 'Position indisponible' : 'Pas encore demandée'}</div>
+      </div>
+    </div>
+
+    <div class="row" style="margin:26px 0 10px"><h2 style="margin:0">Mes lieux</h2><span class="spacer"></span>
+      <button class="btn primary" id="pl-new">${icon('plus')} Nouveau lieu</button></div>
+    <div class="list">
+      ${rules.length ? rules.map(r => `
+        <div class="list-item">
+          <div style="color:${r.inside ? 'var(--ok)' : 'var(--text-3)'}">${icon('place')}</div>
+          <div class="main">
+            <div class="row" style="gap:8px"><b>${esc(r.place || r.ssid || 'Lieu')}</b>${r.inside ? '<span class="chip ok">Sur place</span>' : ''}</div>
+            <div class="row wrap" style="gap:6px;margin-top:4px">
+              ${r.ssid ? `<span class="chip">${icon('wifi', 'icon xs')} ${esc(r.ssid)}</span>` : ''}
+              ${r.useGps ? `<span class="chip">${icon('gps', 'icon xs')} rayon ${r.radius} m</span>` : ''}
+              <span class="chip" title="${esc(r.path)}">${icon('file', 'icon xs')} ${esc(fileName(r.path))}</span>
+            </div>
+          </div>
+          <button class="btn ghost" data-test="${r.id}" title="Ouvrir maintenant">${icon('play')} Tester</button>
+          <button class="btn ghost icon-only" data-edit="${r.id}" title="Modifier">${icon('edit')}</button>
+          <input type="checkbox" class="switch" data-rule-toggle="${r.id}" ${r.enabled ? 'checked' : ''} title="Activer ce lieu">
+        </div>`).join('')
+      : `<div class="card empty">${icon('place')}<div>Ajoute un lieu : quand tu y arrives, ToolBox ouvre le fichier ou l'app de ton choix.</div></div>`}
+    </div>`;
+  },
+  bind(root) {
+    $('[data-open-settings]', root)?.addEventListener('click', e => send({ type: 'openSettingsPage', page: e.currentTarget.dataset.openSettings }));
+    $('#pl-locate', root).addEventListener('click', () => { moduleAction('place_launcher', 'locate'); toast('Recherche de la position…'); });
+    $('#pl-new', root).addEventListener('click', () => this.edit(null));
+    $$('[data-edit]', root).forEach(b => b.addEventListener('click', () => this.edit(b.dataset.edit)));
+    $$('[data-test]', root).forEach(b => b.addEventListener('click', () => moduleAction('place_launcher', 'testRule', { id: b.dataset.test })));
+    $$('[data-rule-toggle]', root).forEach(b => b.addEventListener('change', () => {
+      const r = (modState('place_launcher').rules || []).find(x => x.id === b.dataset.ruleToggle);
+      if (r) moduleAction('place_launcher', 'saveRule', { rule: { ...r, enabled: b.checked } });
+    }));
+  },
+  edit(id) {
+    const s = modState('place_launcher');
+    const existing = (s.rules || []).find(r => r.id === id);
+    const r = existing ? { ...existing } : { id: '', place: '', ssid: (s.connected || [])[0] || '', useGps: false, lat: 0, lon: 0, radius: 150, path: '', enabled: true };
+    const dlg = $('#dialog');
+    let results = [];
+    const draw = () => {
+      const st = modState('place_launcher');
+      dlg.innerHTML = `
+      <div class="dlg-body">
+        <h2>${existing ? 'Modifier le lieu' : 'Nouveau lieu'}</h2>
+        <label class="field"><span>Nom du lieu</span><input type="text" id="r-place" value="${esc(r.place)}" placeholder="Ex. Maison"></label>
+
+        <div class="field"><span>Fichier ou app à ouvrir</span>
+          <div class="row"><input type="text" id="r-path" value="${esc(r.path)}" placeholder="C:\\…\\app.exe" readonly><button class="btn" id="r-pick">${icon('folder')} Choisir…</button></div></div>
+
+        <div class="setting" style="margin:0;padding:12px 16px">${icon('wifi')}
+          <div class="text"><div class="title">Réseau Wi-Fi</div><div class="desc">Laisse vide pour ne pas l'utiliser.</div></div>
+          <input type="text" id="r-ssid" value="${esc(r.ssid)}" placeholder="Nom du Wi-Fi" style="width:190px" list="ssids">
+          <datalist id="ssids">${(st.connected || []).map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+        </div>
+
+        <div class="setting" style="margin:0;padding:12px 16px;flex-wrap:wrap">${icon('gps')}
+          <div class="text"><div class="title">Position GPS</div><div class="desc">Utilise le GPS du PC s'il en a un, sinon la position estimée par Windows.</div></div>
+          <input type="checkbox" class="switch" id="r-gps" ${r.useGps ? 'checked' : ''}>
+          ${r.useGps ? `
+          <div style="flex-basis:100%;display:flex;flex-direction:column;gap:10px;margin-top:8px">
+            <div class="row"><input type="search" id="r-addr" placeholder="Chercher une adresse (ex. 500 boul. de Mortagne, Boucherville)"><button class="btn" id="r-search">${icon('search')}</button></div>
+            <div class="suggestions">${results.map((x, i) => `<button data-res="${i}">${esc(x.display_name)}</button>`).join('')}</div>
+            <div class="row wrap"><button class="btn" id="r-here">${icon('gps')} Ma position actuelle</button>
+              <span class="muted small">${r.lat || r.lon ? `${(+r.lat).toFixed(5)}, ${(+r.lon).toFixed(5)}` : 'Aucune position choisie'}</span></div>
+            <div class="row"><span class="muted" style="width:60px">Rayon</span><input type="range" id="r-radius" min="30" max="2000" step="10" value="${r.radius}"><b id="r-radius-v" style="width:70px;text-align:right">${r.radius} m</b></div>
+          </div>` : ''}
+        </div>
+        <div class="faint small">Au moins un des deux (Wi-Fi ou GPS) doit correspondre pour être « sur place ». L'app s'ouvre à ton arrivée, et aussi au démarrage du PC si tu es déjà sur place.</div>
+      </div>
+      <div class="dlg-foot">
+        ${existing ? `<button class="btn danger left" id="r-del">${icon('trash')} Supprimer</button>` : ''}
+        <button class="btn" id="r-cancel">Annuler</button>
+        <button class="btn primary" id="r-save">Enregistrer</button>
+      </div>`;
+
+      const keep = () => {
+        r.place = $('#r-place', dlg).value; r.ssid = $('#r-ssid', dlg).value.trim();
+        const rad = $('#r-radius', dlg); if (rad) r.radius = +rad.value;
+      };
+      $('#r-pick', dlg).addEventListener('click', async () => { keep(); const p = await pickFile(); if (p) { r.path = p; draw(); } });
+      $('#r-gps', dlg).addEventListener('change', e => { keep(); r.useGps = e.target.checked; draw(); });
+      const rad = $('#r-radius', dlg);
+      if (rad) { setRangeFill(rad); rad.addEventListener('input', () => { $('#r-radius-v', dlg).textContent = rad.value + ' m'; setRangeFill(rad); }); }
+      $('#r-here', dlg)?.addEventListener('click', () => {
+        keep();
+        const p = modState('place_launcher').position;
+        if (p) { r.lat = p.lat; r.lon = p.lon; draw(); toast('Position enregistrée'); }
+        else { moduleAction('place_launcher', 'locate'); toast('Recherche de la position… réessaie dans quelques secondes'); }
+      });
+      const search = async () => {
+        keep();
+        const q = $('#r-addr', dlg).value.trim();
+        if (!q) return;
+        try {
+          const res = await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=5&accept-language=fr&q=' + encodeURIComponent(q));
+          results = await res.json();
+          if (!results.length) toast('Adresse introuvable');
+        } catch { toast('Recherche impossible (pas de connexion ?)'); }
+        draw();
+      };
+      $('#r-search', dlg)?.addEventListener('click', search);
+      $('#r-addr', dlg)?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+      $$('[data-res]', dlg).forEach(b => b.addEventListener('click', () => {
+        const x = results[+b.dataset.res];
+        keep(); r.lat = +x.lat; r.lon = +x.lon; results = [];
+        if (!r.place) r.place = x.display_name.split(',')[0];
+        draw();
+      }));
+      $('#r-cancel', dlg).addEventListener('click', () => dlg.close());
+      $('#r-del', dlg)?.addEventListener('click', () => { moduleAction('place_launcher', 'deleteRule', { id: r.id }); dlg.close(); });
+      $('#r-save', dlg).addEventListener('click', () => {
+        keep();
+        if (!r.path) return toast('Choisis un fichier ou une app');
+        if (!r.ssid && !(r.useGps && (r.lat || r.lon))) return toast('Indique un Wi-Fi ou une position GPS');
+        moduleAction('place_launcher', 'saveRule', { rule: r });
+        dlg.close();
+      });
+    };
+    draw();
+    dlg.showModal();
+    dlg.addEventListener('close', () => renderPage(true), { once: true });
+  },
+};
+
+// ------------------------------------------------------------------ Paramètres
+
+const SettingsPage = {
+  render() {
+    const a = S.app;
+    const row = (key, ic, title, desc) => `<div class="setting">${icon(ic)}
+      <div class="text"><div class="title">${title}</div><div class="desc">${desc}</div></div>
+      <input type="checkbox" class="switch" data-setting="${key}" ${a[key] ? 'checked' : ''}></div>`;
+    return `
+    ${row('startWithWindows', 'startup', 'Démarrer avec Windows', 'ToolBox se lance en arrière-plan à l\'ouverture de session.')}
+    ${row('minimizeToTray', 'tray', 'Réduire dans la barre des tâches', 'Le bouton ✕ cache la fenêtre au lieu de quitter. Clic droit sur l\'icône près de l\'horloge pour quitter.')}
+    <div class="section-title">Fonctions</div>
+    ${S.order.map(id => { const m = S.modules[id]; const def = PAGES.find(p => p.module === id) || {}; return `<div class="setting">${icon(def.icon || 'apps')}
+      <div class="text"><div class="title">${esc(m.name)}</div><div class="desc">${esc(m.description)}</div></div>
+      <input type="checkbox" class="switch" data-module-switch="${id}" ${m.enabled ? 'checked' : ''}></div>`; }).join('')}
+    <div class="section-title">Données</div>
+    <div class="setting">${icon('folder')}
+      <div class="text"><div class="title">Dossier des réglages</div><div class="desc mono">${esc(a.dataDir)}</div></div>
+      <button class="btn" id="open-data">Ouvrir</button></div>`;
+  },
+  bind(root) {
+    $$('[data-setting]', root).forEach(el => el.addEventListener('change', () => send({ type: 'setSetting', key: el.dataset.setting, value: el.checked })));
+    $('#open-data', root).addEventListener('click', () => send({ type: 'openDataDir' }));
+  },
+};
+
+// ------------------------------------------------------------------ Mises à jour
+
+const UpdatesPage = {
+  render() {
+    const u = S.update || {};
+    const msg = {
+      idle: ['', 'Pas encore vérifié'],
+      checking: ['', 'Vérification…'],
+      upToDate: ['ok', 'ToolBox est à jour'],
+      available: ['warn', `Version ${u.latest} disponible`],
+      downloading: ['warn', `Téléchargement… ${u.progress || 0} %`],
+      ready: ['ok', 'Mise à jour installée : redémarre pour l\'utiliser'],
+      error: ['warn', u.error || 'Erreur'],
+    }[u.status] || ['', ''];
+    return `
+    <div class="card">
+      <div class="row wrap" style="gap:40px">
+        <div><div class="label">Version installée</div><div class="value big">${esc(u.current || S.app.version)}</div></div>
+        ${u.latest ? `<div><div class="label">Dernière version</div><div class="value big">${esc(u.latest.replace(/^v/, ''))}</div></div>` : ''}
+        <span class="spacer"></span>
+        <div class="stack" style="align-items:flex-end">
+          <span class="pill ${msg[0]}"><span class="led"></span>${esc(msg[1])}</span>
+          <span class="faint small">Dernière vérification : ${fmtAgo(u.lastCheck)}</span>
+        </div>
+      </div>
+      <div class="row wrap" style="margin-top:24px">
+        ${u.status === 'available' ? `<button class="btn primary big" id="up-install">${icon('update')} Installer ${esc(u.latest)}</button>` : ''}
+        ${u.status === 'ready' ? `<button class="btn primary big" id="up-restart">${icon('update')} Redémarrer ToolBox</button>` : ''}
+        <button class="btn big" id="up-check" ${['checking', 'downloading'].includes(u.status) ? 'disabled' : ''}>Rechercher des mises à jour</button>
+      </div>
+    </div>
+    <div class="setting">${icon('update')}
+      <div class="text"><div class="title">Mises à jour automatiques</div>
+        <div class="desc">Vérifie toutes les 6 heures, installe en arrière-plan et redémarre ToolBox quand la fenêtre est fermée.</div></div>
+      <input type="checkbox" class="switch" id="up-auto" ${S.app.autoUpdate ? 'checked' : ''}></div>
+    ${u.notes ? `<div class="section-title">Nouveautés</div><div class="card tight" style="white-space:pre-wrap;user-select:text">${esc(u.notes)}</div>` : ''}`;
+  },
+  bind(root) {
+    $('#up-check', root).addEventListener('click', () => send({ type: 'checkUpdate' }));
+    $('#up-install', root)?.addEventListener('click', () => send({ type: 'installUpdate' }));
+    $('#up-restart', root)?.addEventListener('click', () => send({ type: 'restart' }));
+    $('#up-auto', root).addEventListener('change', e => send({ type: 'setSetting', key: 'autoUpdate', value: e.target.checked }));
+  },
+};
+
+// ------------------------------------------------------------------ Mode aperçu (navigateur, sans le C++)
+
+const Mock = {
+  state: null,
+  init() {
+    const now = Math.floor(Date.now() / 1000);
+    this.state = {
+      type: 'state',
+      app: { version: '0.1.0', enabled: true, startWithWindows: true, minimizeToTray: true, autoUpdate: true, dataDir: 'C:\\Users\\Mederic\\AppData\\Roaming\\ToolBox' },
+      update: { current: '0.1.0', status: 'upToDate', latest: 'v0.1.0', notes: '', progress: 0, lastCheck: now - 120 },
+      modules: [
+        { id: 'monitor', name: 'Moniteur', description: 'Processeur, mémoire, disque et batterie en direct.', enabled: true, running: true, state: {} },
+        { id: 'processes', name: 'Programmes', description: "Arrête les programmes inutiles pour libérer de la mémoire, puis relance-les d'un clic.", enabled: true, running: true, state: {
+          useless: ['c:\\program files\\teams\\ms-teams.exe'], lastEvent: '', stopped: [{ path: 'C:\\Users\\Mederic\\AppData\\Local\\Discord\\Discord.exe', name: 'Discord', time: now - 300 }] } },
+        { id: 'enter_guard', name: 'Garde Enter', description: "Supprime la touche voisine d'Enter frappée par accident.", enabled: true, running: true, state: { keyName: 'À', isDefaultKey: true, thresholdMs: 80, corrections: 12, exclusions: [], capturing: false } },
+        { id: 'clipboard', name: 'Presse-papiers', description: 'Retrouve tout ce que tu as copié.', enabled: true, running: true, state: { maxItems: 50, keepAfterRestart: false, items: [
+          { id: 3, text: 'https://github.com/Mede2026/ToolBox', time: now - 30, pinned: false },
+          { id: 2, text: 'Exercice 4 : 3/4 + 5/6 = 19/12', time: now - 600, pinned: true },
+          { id: 1, text: 'Massif de Charlevoix — horaire des remontées', time: now - 7200, pinned: false }] } },
+        { id: 'converter', name: 'Convertisseur', description: 'Unités et devises.', enabled: true, running: true, state: {} },
+        { id: 'app_launcher', name: "Raccourcis d'apps", description: 'Lance plusieurs apps d\'un seul clic.', enabled: true, running: true, state: { groups: [
+          { id: 'g1', name: 'Devoirs', emoji: '📚', items: ['C:\\Program Files\\Microsoft Office\\WINWORD.EXE', 'https://www.alloprof.qc.ca'] },
+          { id: 'g2', name: 'DJ', emoji: '🎧', items: ['C:\\Program Files\\rekordbox\\rekordbox.exe'] }] } },
+        { id: 'place_launcher', name: 'Lancement par lieu', description: 'Ouvre un fichier ou une app quand tu arrives à un endroit (Wi-Fi ou GPS).', enabled: true, running: true, state: {
+          connected: ['Maison-5G'], wifiError: '', gpsError: '', lastEvent: '', position: { lat: 45.5913, lon: -73.4364, accuracy: 35, time: now - 40 },
+          rules: [{ id: 'r1', place: 'Maison', ssid: 'Maison-5G', useGps: true, lat: 45.5913, lon: -73.4364, radius: 150, path: 'C:\\Program Files\\rekordbox\\rekordbox.exe', enabled: true, inside: true }] } },
+      ],
+    };
+    setTimeout(() => receive(this.state), 50);
+    let t = 0;
+    setInterval(() => {
+      t++;
+      receive({ type: 'live', live: { monitor: {
+        cpu: 35 + 20 * Math.sin(t / 5) + Math.random() * 10, cores: 16,
+        ram: { used: 9.1e9 + Math.random() * 3e8, total: 16e9 }, disk: { drive: 'C:', used: 312e9, total: 512e9 },
+        battery: { percent: 56, charging: false, secondsLeft: 9800, saver: true },
+        net: { down: 1.4e6 + Math.random() * 5e5, up: 2e5 }, uptime: 18000 + t },
+        processes: { programs: [
+          { key: 'c:\\program files\\google\\chrome\\application\\chrome.exe', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', name: 'Google Chrome', exe: 'chrome.exe', count: 14, ram: 2.1e9, cpu: 4.2 + Math.random(), windowed: true, title: 'YouTube - Google Chrome', useless: false },
+          { key: 'c:\\program files\\teams\\ms-teams.exe', path: 'C:\\Program Files\\Teams\\ms-teams.exe', name: 'Microsoft Teams', exe: 'ms-teams.exe', count: 5, ram: 6.4e8, cpu: 0.8, windowed: false, title: '', useless: true },
+          { key: 'c:\\program files\\rekordbox\\rekordbox.exe', path: 'C:\\Program Files\\rekordbox\\rekordbox.exe', name: 'rekordbox', exe: 'rekordbox.exe', count: 1, ram: 1.2e9, cpu: 12.5, windowed: true, title: 'rekordbox', useless: false }] } } });
+    }, 1000);
+  },
+  handle(msg) {
+    const s = this.state;
+    const mod = id => s.modules.find(m => m.id === id);
+    if (msg.type === 'setModule') mod(msg.id).enabled = msg.enabled;
+    else if (msg.type === 'setGlobal') s.app.enabled = msg.enabled;
+    else if (msg.type === 'setSetting') s.app[msg.key] = msg.value;
+    else if (msg.type === 'pickFile') return setTimeout(() => receive({ type: 'filePicked', requestId: msg.requestId, path: 'C:\\Program Files\\Exemple\\app.exe' }), 100);
+    else if (msg.type === 'moduleAction' && msg.id === 'converter' && msg.action === 'setPref') mod('converter').state[msg.payload.key] = msg.payload.value;
+    else return;
+    receive(JSON.parse(JSON.stringify(s)));
+  },
+};
+
+// ------------------------------------------------------------------ Démarrage
+
+if (webview) {
+  webview.addEventListener('message', e => receive(e.data));
+  send({ type: 'ready' });
+} else {
+  Mock.init();
+}
+renderNav();
