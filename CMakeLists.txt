@@ -1,7 +1,15 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Version : la GitHub Action la remplace par celle du tag (ex. v0.2.0 -> 0.2.0).
-set(TOOLBOX_VERSION "0.2.0" CACHE STRING "Version de ToolBox")
+set(TOOLBOX_VERSION "0.3.0" CACHE STRING "Version de ToolBox")
+
+# Dépendances C++ via vcpkg (Tesseract). Le fichier vcpkg.json liste les bibliothèques.
+if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
+  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+endif()
+set(VCPKG_OVERLAY_TRIPLETS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/triplets")
+set(VCPKG_TARGET_TRIPLET "x64-windows-static-release" CACHE STRING "")
+set(VCPKG_HOST_TRIPLET "x64-windows-static-release" CACHE STRING "")
 
 project(ToolBox VERSION ${TOOLBOX_VERSION} LANGUAGES CXX RC)
 
@@ -12,6 +20,8 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+find_package(Tesseract CONFIG REQUIRED)
 
 set(DEPS_DIR ${CMAKE_BINARY_DIR}/deps)
 
@@ -62,11 +72,15 @@ add_executable(ToolBox WIN32
   src/updater.cpp
   src/util.cpp
   src/geo.cpp
+  src/hotkey.cpp
+  src/http.cpp
+  src/screen_select.cpp
   src/modules/app_launcher.cpp
   src/modules/clipboard_history.cpp
   src/modules/enter_guard.cpp
   src/modules/place_launcher.cpp
   src/modules/process_manager.cpp
+  src/modules/screen_ocr.cpp
   src/modules/system_monitor.cpp
   ${CMAKE_BINARY_DIR}/generated/toolbox.rc
 )
@@ -87,7 +101,8 @@ target_compile_options(ToolBox PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4 /utf-8 /per
 target_link_libraries(ToolBox PRIVATE
   ${WEBVIEW2_DIR}/build/native/x64/WebView2LoaderStatic.lib
   winhttp bcrypt dwmapi shell32 shlwapi advapi32 user32 ole32 comctl32 version
-  wlanapi iphlpapi windowsapp secur32)
+  wlanapi iphlpapi windowsapp secur32 msimg32
+  Tesseract::libtesseract)
 
 set_target_properties(ToolBox PROPERTIES
   LINK_FLAGS "/MANIFESTUAC:\"level='asInvoker' uiAccess='false'\"")

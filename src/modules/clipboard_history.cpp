@@ -28,43 +28,30 @@ bool OpenClipboardRetry(HWND hwnd) {
 }  // namespace
 
 ClipboardHistory::ClipboardHistory(HWND hwnd, std::function<void()> on_change, std::function<void()> on_hotkey)
-    : hwnd_(hwnd), on_change_(std::move(on_change)), on_hotkey_(std::move(on_hotkey)) {}
+    : hwnd_(hwnd),
+      on_change_(std::move(on_change)),
+      on_hotkey_(std::move(on_hotkey)),
+      hotkey_(hwnd, 0x4201, MOD_CONTROL | MOD_ALT, 'V', "Ctrl + Alt + V") {}
 
 ClipboardHistory::~ClipboardHistory() { Stop(); }
 
 void ClipboardHistory::Start() {
   if (running_) return;
   running_ = AddClipboardFormatListener(hwnd_) != FALSE;
-  RegisterShortcut();
+  hotkey_.Register();
 }
 
 void ClipboardHistory::Stop() {
-  UnregisterShortcut();
+  hotkey_.Unregister();
   if (!running_) return;
   RemoveClipboardFormatListener(hwnd_);
   running_ = false;
 }
 
-void ClipboardHistory::RegisterShortcut() {
-  UnregisterShortcut();
-  hotkey_error_.clear();
-  if (!hotkey_enabled_ || !hotkey_vk_) return;
-  hotkey_registered_ = RegisterHotKey(hwnd_, kHotkeyId, hotkey_mods_ | MOD_NOREPEAT, hotkey_vk_) != FALSE;
-  if (!hotkey_registered_) hotkey_error_ = "Ce raccourci est déjà utilisé par une autre app. Choisis-en un autre.";
-}
-
-void ClipboardHistory::UnregisterShortcut() {
-  if (hotkey_registered_) UnregisterHotKey(hwnd_, kHotkeyId);
-  hotkey_registered_ = false;
-}
-
 void ClipboardHistory::LoadConfig(const json& cfg) {
   max_items_ = std::clamp(cfg.value("maxItems", 50), 10, 500);
   keep_after_restart_ = cfg.value("keepAfterRestart", false);
-  hotkey_enabled_ = cfg.value("hotkeyEnabled", true);
-  hotkey_mods_ = cfg.value("hotkeyMods", static_cast<UINT>(MOD_CONTROL | MOD_ALT));
-  hotkey_vk_ = cfg.value("hotkeyVk", static_cast<UINT>('V'));
-  hotkey_label_ = cfg.value("hotkeyLabel", std::string("Ctrl + Alt + V"));
+  hotkey_.Load(cfg);
   auto_paste_ = cfg.value("autoPaste", true);
   items_.clear();
   if (keep_after_restart_) {
@@ -89,9 +76,9 @@ json ClipboardHistory::SaveConfig() const {
       items.push_back({{"text", util::ToUtf8(e.text)}, {"time", e.time}, {"pinned", e.pinned}});
     }
   }
-  return json{{"maxItems", max_items_}, {"keepAfterRestart", keep_after_restart_}, {"items", items},
-              {"hotkeyEnabled", hotkey_enabled_}, {"hotkeyMods", hotkey_mods_}, {"hotkeyVk", hotkey_vk_},
-              {"hotkeyLabel", hotkey_label_}, {"autoPaste", auto_paste_}};
+  json cfg{{"maxItems", max_items_}, {"keepAfterRestart", keep_after_restart_}, {"items", items}, {"autoPaste", auto_paste_}};
+  hotkey_.Save(cfg);
+  return cfg;
 }
 
 json ClipboardHistory::State() const {
@@ -99,9 +86,9 @@ json ClipboardHistory::State() const {
   for (const auto& e : items_) {
     items.push_back({{"id", e.id}, {"text", util::ToUtf8(e.text)}, {"time", e.time}, {"pinned", e.pinned}});
   }
-  return json{{"maxItems", max_items_}, {"keepAfterRestart", keep_after_restart_}, {"items", items},
-              {"hotkeyEnabled", hotkey_enabled_}, {"hotkeyLabel", hotkey_label_}, {"hotkeyError", hotkey_error_},
-              {"autoPaste", auto_paste_}};
+  json state{{"maxItems", max_items_}, {"keepAfterRestart", keep_after_restart_}, {"items", items}, {"autoPaste", auto_paste_}};
+  hotkey_.AddState(state);
+  return state;
 }
 
 bool ClipboardHistory::CopyItem(unsigned long long id) {
@@ -110,6 +97,7 @@ bool ClipboardHistory::CopyItem(unsigned long long id) {
 }
 
 void ClipboardHistory::HandleAction(const std::string& action, const json& payload) {
+  if (hotkey_.HandleAction(action, payload, running_)) return;
   const auto id = payload.value("id", 0ULL);
   auto it = std::find_if(items_.begin(), items_.end(), [&](const Entry& e) { return e.id == id; });
 
@@ -126,19 +114,6 @@ void ClipboardHistory::HandleAction(const std::string& action, const json& paylo
     Trim();
   } else if (action == "setKeep") {
     keep_after_restart_ = payload.value("value", false);
-  } else if (action == "hotkeyCaptureStart") {
-    UnregisterShortcut();  // sinon la combinaison n'arrive pas jusqu'à l'interface
-  } else if (action == "hotkeyCaptureCancel") {
-    if (running_) RegisterShortcut();
-  } else if (action == "setHotkey") {
-    hotkey_mods_ = payload.value("mods", 0u) & (MOD_ALT | MOD_CONTROL | MOD_SHIFT | MOD_WIN);
-    hotkey_vk_ = payload.value("vk", 0u) & 0xFF;
-    hotkey_label_ = payload.value("label", std::string());
-    hotkey_enabled_ = true;
-    if (running_) RegisterShortcut();
-  } else if (action == "setHotkeyEnabled") {
-    hotkey_enabled_ = payload.value("value", true);
-    if (running_) RegisterShortcut();
   } else if (action == "setAutoPaste") {
     auto_paste_ = payload.value("value", true);
   }
@@ -147,7 +122,7 @@ void ClipboardHistory::HandleAction(const std::string& action, const json& paylo
 void ClipboardHistory::OnWindowMessage(UINT msg, WPARAM wparam, LPARAM) {
   if (!running_) return;
   if (msg == WM_CLIPBOARDUPDATE) Capture();
-  if (msg == WM_HOTKEY && wparam == kHotkeyId && on_hotkey_) on_hotkey_();
+  if (hotkey_.Matches(msg, wparam) && on_hotkey_) on_hotkey_();
 }
 
 void ClipboardHistory::Capture() {

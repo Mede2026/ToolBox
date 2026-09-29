@@ -1,0 +1,8 @@
+{
+  "name": "toolbox",
+  "version-string": "0.3.0",
+  "description": "ToolBox : dépendances C++ (Tesseract pour l'OCR)",
+  "dependencies": [
+    "tesseract"
+  ]
+}

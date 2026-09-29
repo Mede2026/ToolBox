@@ -6,6 +6,7 @@
 #include <functional>
 #include <string>
 
+#include "hotkey.h"
 #include "modules/module.h"
 
 // Historique du presse-papiers (texte seulement).
@@ -45,23 +46,13 @@ class ClipboardHistory : public Module {
   void Capture();
   bool CopyToClipboard(const std::wstring& text);
   void Trim();
-  void RegisterShortcut();
-  void UnregisterShortcut();
-
-  static constexpr int kHotkeyId = 0x4201;
 
   HWND hwnd_;
   std::function<void()> on_change_;
   std::function<void()> on_hotkey_;
   bool running_ = false;
 
-  // Raccourci : par défaut Ctrl + Alt + V
-  bool hotkey_enabled_ = true;
-  UINT hotkey_mods_ = MOD_CONTROL | MOD_ALT;
-  UINT hotkey_vk_ = 'V';
-  std::string hotkey_label_ = "Ctrl + Alt + V";
-  bool hotkey_registered_ = false;
-  std::string hotkey_error_;
+  GlobalHotkey hotkey_;  // par défaut Ctrl + Alt + V
   bool auto_paste_ = true;
 
   std::deque<Entry> items_;   // plus récent en premier

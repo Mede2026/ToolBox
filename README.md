@@ -13,6 +13,7 @@ Chaque fonction peut être **activée ou désactivée** depuis la barre latéral
 | **Programmes** | Arrête les programmes inutiles (★ + « Mode léger ») et les relance d'un clic |
 | **Garde Enter** | Efface la touche voisine d'Enter (`à`, `\`, `#`…) frappée par accident, même si Enter est déjà pressé |
 | **Presse-papiers** | Historique de tout ce qui est copié + **fenêtre rapide** ouverte par un raccourci au choix (Ctrl + Alt + V par défaut) qui colle l'élément choisi ; les mots de passe des gestionnaires sont ignorés |
+| **Texte à l'écran** | Un raccourci (Ctrl + Alt + T par défaut) fige l'écran : on sélectionne une zone, le texte est lu par **Tesseract** (OCR) et copié. Langues téléchargées au premier usage |
 | **Raccourcis d'apps** | Groupes d'apps, de fichiers ou de sites à lancer d'un seul clic |
 | **Lancement par lieu** | Ouvre une ou plusieurs apps quand tu arrives quelque part (Wi-Fi et/ou GPS) |
 
@@ -35,12 +36,15 @@ Onglet **Releases** → `ToolBox.exe`. C'est un seul fichier, sans installation.
 
 ## Compiler soi-même (Windows)
 
-Il faut Visual Studio 2022 (charge de travail « Développement Desktop en C++ ») et CMake.
+Il faut Visual Studio 2022 (charge de travail « Développement Desktop en C++ »), CMake et [vcpkg](https://vcpkg.io) (pour Tesseract, listé dans `vcpkg.json`).
 
 ```bat
+set VCPKG_ROOT=C:\chemin\vers\vcpkg
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
+
+La première compilation de Tesseract prend un moment. Ensuite, vcpkg la garde en cache.
 
 Pour voir l'interface **sans Windows**, il suffit d'ouvrir `ui/index.html` dans un navigateur. Des données d'exemple s'affichent.
 
@@ -53,6 +57,9 @@ src/
   settings.cpp          réglages (%APPDATA%\ToolBox\settings.json)
   updater.cpp           mises à jour via les Releases GitHub
   geo.cpp               position (GPS / service de localisation de Windows)
+  screen_select.cpp     écran figé + sélection d'une zone (OCR)
+  hotkey.cpp            raccourcis clavier globaux configurables
+  http.cpp              téléchargements HTTPS (mises à jour, langues de l'OCR)
   modules/              une fonction = un module (Start / Stop / State / HandleAction)
 ui/
   index.html, style.css, app.js, fonts.css   interface (fusionnée dans le .exe à la compilation)

@@ -89,6 +89,7 @@ const ICONS = {
   star: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z',
   stop: 'M7 7h10v10H7z',
   leaf: 'M5 19c0-8 5-13 14-14 0 9-5 14-13 14zM5 19l7-7',
+  scan: 'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 9.5h8M8 12.5h8M8 15.5h5',
   tray: 'M4 14h4l1.5 2.5h5L16 14h4M4 14l2.5-8h11l2.5 8v5H4z',
 };
 const icon = (name, cls = 'icon') => `<svg class="${cls}" viewBox="0 0 24 24"><path d="${ICONS[name] || ''}"/></svg>`;
@@ -166,6 +167,7 @@ const PAGES = [
   { id: 'processes', label: 'Programmes', icon: 'cpu', module: 'processes', keys: 'taches tuer fermer arreter relancer ressources lent mode leger', page: () => ProcessesPage },
   { id: 'enter_guard', label: 'Garde Enter', icon: 'keyboard', module: 'enter_guard', keys: 'a clavier touche accident entree faute', page: () => EnterGuardPage },
   { id: 'clipboard', label: 'Presse-papiers', icon: 'clipboard', module: 'clipboard', keys: 'copier coller ctrl c v historique texte', page: () => ClipboardPage },
+  { id: 'ocr', label: "Texte à l'écran", icon: 'scan', module: 'ocr', keys: 'ocr tesseract texte image capture ecran lire copier scanner photo', page: () => OcrPage },
   { id: 'app_launcher', label: "Raccourcis d'apps", icon: 'apps', module: 'app_launcher', keys: 'lancer groupe raccourci ouvrir apps', page: () => AppLauncherPage },
   { id: 'place_launcher', label: 'Lancement par lieu', icon: 'place', module: 'place_launcher', keys: 'gps wifi maison ecole lieu adresse position', page: () => PlacePage },
   { sep: true },
@@ -424,7 +426,7 @@ const HomePage = {
       ${this.card('app_launcher', 'apps', "Raccourcis d'apps", this.appsBody())}
       ${this.card('processes', 'cpu', 'Programmes', this.procBody())}
       ${this.card('place_launcher', 'place', 'Lieux', this.placeBody())}
-      ${this.card('enter_guard', 'keyboard', 'Garde Enter', this.guardBody())}
+      ${this.card('ocr', 'scan', "Texte à l'écran", this.ocrBody())}
     </div>
 
     <h2 class="home-section">Toutes les fonctions</h2>
@@ -475,6 +477,13 @@ const HomePage = {
       <span class="spacer"></span><span class="faint small">${r.inside ? 'Sur place' : 'Ailleurs'}</span></div>`).join('')}</div>
       ${(s.connected || []).length ? `<div class="faint small">${icon('wifi', 'icon xs')} ${esc(s.connected.join(', '))}</div>` : ''}`;
   },
+  ocrBody() {
+    const s = modState('ocr');
+    const last = (s.history || [])[0];
+    return `<div class="faint small">${s.hotkeyEnabled && s.hotkeyLabel ? `Raccourci : <kbd class="small">${esc(s.hotkeyLabel)}</kbd>` : 'Sélectionne une zone, le texte est copié.'}</div>
+      <div><button class="btn primary" data-ocr-go>${icon('scan')} Capturer une zone</button></div>
+      ${last ? `<div class="quick-item" data-ocr-copy="${last.id}" title="Cliquer pour copier">${esc(last.text.slice(0, 120))}</div>` : ''}`;
+  },
   guardBody() {
     const s = modState('enter_guard');
     return `<div class="row" style="gap:16px"><kbd>${esc(s.keyName || '?')}</kbd>
@@ -488,6 +497,9 @@ const HomePage = {
       if (clip) { moduleAction('clipboard', 'copy', { id: +clip.dataset.clipId }); toast('Copié !'); }
       const g = e.target.closest('[data-launch-group]');
       if (g) { moduleAction('app_launcher', 'launchGroup', { id: g.dataset.launchGroup }); toast('Lancement…'); }
+      if (e.target.closest('[data-ocr-go]')) send({ type: 'ocrCapture' });
+      const oc = e.target.closest('[data-ocr-copy]');
+      if (oc) { moduleAction('ocr', 'copy', { id: +oc.dataset.ocrCopy }); toast('Copié !'); }
       const pm = e.target.closest('[data-home-pm]');
       if (pm) { moduleAction('processes', pm.dataset.homePm); toast(pm.dataset.homePm === 'stopUseless' ? 'Mode léger activé' : 'Relance…'); }
     });
@@ -769,14 +781,8 @@ const ClipboardPage = {
     </div>`;
   },
   bind(root) {
-    $('#clip-hotkey', root).addEventListener('click', e => {
-      const b = e.target.closest('[data-hk]');
-      if (!b) return;
-      if (b.dataset.hk === 'capture') { hotkeyCapturing = true; moduleAction('clipboard', 'hotkeyCaptureStart'); this.renderHotkey(); }
-      if (b.dataset.hk === 'cancel') stopHotkeyCapture(true);
-    });
+    bindHotkeyCard($('#clip-hotkey', root), 'clipboard', () => this.renderHotkey());
     $('#clip-hotkey', root).addEventListener('change', e => {
-      if (e.target.id === 'hk-enabled') moduleAction('clipboard', 'setHotkeyEnabled', { value: e.target.checked });
       if (e.target.id === 'hk-paste') moduleAction('clipboard', 'setAutoPaste', { value: e.target.checked });
     });
     this.renderHotkey();
@@ -798,25 +804,11 @@ const ClipboardPage = {
   renderHotkey() {
     const el = document.getElementById('clip-hotkey');
     if (!el) return;
-    const s = modState('clipboard');
-    el.innerHTML = `
-    ${s.hotkeyError && !hotkeyCapturing ? `<div class="banner">${icon('info')}<div class="text">${esc(s.hotkeyError)}</div></div>` : ''}
-    <div class="card">
-      <div class="row wrap" style="gap:22px">
-        <div class="keycap ${hotkeyCapturing ? 'listening' : ''}" style="font-size:20px;height:60px;min-width:120px">${hotkeyCapturing ? 'Appuie…' : esc(s.hotkeyLabel || '—')}</div>
-        <div style="flex:1;min-width:220px">
-          <h3>Fenêtre rapide</h3>
-          <div class="muted">Ce raccourci ouvre une petite fenêtre avec ton historique, n'importe où dans Windows. Choisis un élément : il est collé là où tu écrivais.</div>
-        </div>
-        ${hotkeyCapturing
-          ? `<div class="stack" style="align-items:flex-end"><span class="pill warn"><span class="led"></span>Appuie sur la combinaison (ex. Ctrl + Alt + V)</span><button class="btn" data-hk="cancel">Annuler</button></div>`
-          : `<button class="btn primary" data-hk="capture">${icon('keyboard')} Changer le raccourci</button>`}
-      </div>
-      <div class="row wrap" style="margin-top:18px;gap:28px">
-        <label class="row"><input type="checkbox" class="switch" id="hk-enabled" ${s.hotkeyEnabled ? 'checked' : ''}> Raccourci activé</label>
-        <label class="row"><input type="checkbox" class="switch" id="hk-paste" ${s.autoPaste ? 'checked' : ''}> Coller automatiquement</label>
-      </div>
-    </div>`;
+    el.innerHTML = hotkeyCardHTML('clipboard', {
+      title: 'Fenêtre rapide',
+      desc: "Ce raccourci ouvre une petite fenêtre avec ton historique, n'importe où dans Windows. Choisis un élément : il est collé là où tu écrivais.",
+      extra: `<label class="row"><input type="checkbox" class="switch" id="hk-paste" ${modState('clipboard').autoPaste ? 'checked' : ''}> Coller automatiquement</label>`,
+    });
   },
   renderList() {
     const el = document.getElementById('clip-list');
@@ -843,12 +835,159 @@ const ClipboardPage = {
   },
 };
 
-let hotkeyCapturing = false;
+// ------------------------------------------------------------------ Texte à l'écran (OCR)
+
+const OcrPage = {
+  render() {
+    return `
+    <div class="card">
+      <div class="row wrap" style="gap:26px">
+        <div class="ocr-illus">${icon('scan')}</div>
+        <div style="flex:1;min-width:260px">
+          <h2 style="margin:0 0 6px">Lire le texte de l'écran</h2>
+          <div class="muted" id="ocr-intro"></div>
+        </div>
+        <button class="btn primary big" id="ocr-go">${icon('scan')} Capturer une zone</button>
+      </div>
+      <div id="ocr-status" style="margin-top:16px"></div>
+    </div>
+    <div id="ocr-hotkey"></div>
+    <div class="section-title">Langues</div>
+    <div class="card tight" id="ocr-langs"></div>
+    <div class="section-title">Réglages</div>
+    <div class="setting">${icon('convert')}
+      <div class="text"><div class="title">Tout mettre sur une seule ligne</div><div class="desc">Pratique pour coller dans une barre de recherche ou un formulaire.</div></div>
+      <input type="checkbox" class="switch" id="ocr-single" ${modState('ocr').singleLine ? 'checked' : ''}></div>
+    <div class="setting">${icon('info')}
+      <div class="text"><div class="title">Afficher une notification</div><div class="desc">Un aperçu du texte copié apparaît près de l'horloge.</div></div>
+      <input type="checkbox" class="switch" id="ocr-notify" ${modState('ocr').notify ? 'checked' : ''}></div>
+    <div class="row" style="margin:26px 0 10px"><div class="section-title" style="margin:0">Derniers textes lus</div><span class="spacer"></span>
+      <button class="btn ghost" id="ocr-clear">${icon('trash')} Tout effacer</button></div>
+    <div class="list" id="ocr-history"></div>`;
+  },
+  bind(root) {
+    $('#ocr-go', root).addEventListener('click', () => send({ type: 'ocrCapture' }));
+    bindHotkeyCard($('#ocr-hotkey', root), 'ocr', () => this.renderHotkey());
+    $('#ocr-single', root).addEventListener('change', e => moduleAction('ocr', 'setSingleLine', { value: e.target.checked }));
+    $('#ocr-notify', root).addEventListener('change', e => moduleAction('ocr', 'setNotify', { value: e.target.checked }));
+    $('#ocr-clear', root).addEventListener('click', () => moduleAction('ocr', 'clear'));
+    $('#ocr-langs', root).addEventListener('click', e => {
+      if (e.target.closest('#ocr-download')) { moduleAction('ocr', 'downloadLangs'); return; }
+      const chip = e.target.closest('[data-lang]');
+      if (!chip) return;
+      const langs = modState('ocr').langs || [];
+      let sel = langs.filter(l => l.selected).map(l => l.code);
+      sel = sel.includes(chip.dataset.lang) ? sel.filter(c => c !== chip.dataset.lang) : [...sel, chip.dataset.lang];
+      if (!sel.length) return toast('Garde au moins une langue');
+      moduleAction('ocr', 'setLangs', { list: sel });
+    });
+    $('#ocr-history', root).addEventListener('click', e => {
+      const b = e.target.closest('[data-ocr-act]');
+      if (!b) return;
+      moduleAction('ocr', b.dataset.ocrAct, { id: +b.dataset.id });
+      if (b.dataset.ocrAct === 'copy') toast('Copié !');
+    });
+    this.update();
+  },
+  update() {
+    const s = modState('ocr');
+    const intro = document.getElementById('ocr-intro');
+    if (!intro) return;
+    intro.innerHTML = `${s.hotkeyEnabled ? `Appuie sur <kbd class="small">${esc(s.hotkeyLabel)}</kbd> n'importe où, puis` : 'Clique sur le bouton, puis'} sélectionne une zone : le texte est lu par Tesseract et copié. Ça marche sur les images, les vidéos en pause, les PDF scannés, les jeux…`;
+    const st = document.getElementById('ocr-status');
+    st.innerHTML = {
+      downloading: `<span class="pill warn"><span class="led"></span>Téléchargement de la langue : ${esc(s.detail)}</span>`,
+      reading: `<span class="pill warn"><span class="led"></span>Lecture en cours…</span>`,
+      error: `<div class="banner" style="margin:0">${icon('info')}<div class="text">${esc(s.detail)}</div></div>`,
+    }[s.status] || `<span class="pill ok"><span class="led"></span>Prêt${s.engineLoaded ? ' · moteur en mémoire' : ''}</span>`;
+    this.renderHotkey();
+    this.renderLangs();
+    this.renderHistory();
+  },
+  renderHotkey() {
+    const el = document.getElementById('ocr-hotkey');
+    if (el) el.innerHTML = hotkeyCardHTML('ocr', { title: 'Raccourci', desc: "Fige l'écran pour choisir la zone à lire, depuis n'importe quelle app." });
+  },
+  renderLangs() {
+    const el = document.getElementById('ocr-langs');
+    if (!el) return;
+    const langs = modState('ocr').langs || [];
+    const missing = langs.filter(l => l.selected && !l.installed);
+    const mb = missing.reduce((a, l) => a + l.size, 0) / 1e6;
+    el.innerHTML = `
+      <div class="row wrap" style="gap:8px">${langs.map(l => `
+        <button class="tab ${l.selected ? 'active' : ''}" data-lang="${l.code}" title="${l.installed ? 'Installée' : 'Sera téléchargée (' + nf1.format(l.size / 1e6) + ' Mo)'}">
+          ${esc(l.name)} ${l.installed ? '✓' : '↓'}</button>`).join('')}</div>
+      <div class="row wrap" style="margin-top:12px">
+        <span class="muted small" style="flex:1">${missing.length
+          ? `${missing.map(l => l.name).join(', ')} : ${nf1.format(mb)} Mo à télécharger une seule fois (fait automatiquement à la première lecture).`
+          : 'Toutes les langues choisies sont installées. Moins de langues = lecture plus rapide.'}</span>
+        ${missing.length ? `<button class="btn" id="ocr-download">${icon('update')} Télécharger maintenant</button>` : ''}
+      </div>`;
+  },
+  renderHistory() {
+    const el = document.getElementById('ocr-history');
+    if (!el) return;
+    const h = modState('ocr').history || [];
+    el.innerHTML = h.length ? h.map(e => `
+      <div class="list-item">
+        <div class="main"><div class="clip-text" style="user-select:text">${esc(e.text.length > 600 ? e.text.slice(0, 600) + '…' : e.text)}</div>
+          <div class="clip-meta">${fmtAgo(e.time)} · lu en ${nf1.format(e.ms / 1000)} s · ${nf0.format(e.text.length)} caractères</div></div>
+        <div class="actions">
+          <button class="btn ghost icon-only" data-ocr-act="copy" data-id="${e.id}" title="Copier">${icon('copy')}</button>
+          <button class="btn ghost icon-only" data-ocr-act="delete" data-id="${e.id}" title="Supprimer">${icon('trash')}</button>
+        </div>
+      </div>`).join('') : `<div class="card empty">${icon('scan')}<div>Les textes lus apparaîtront ici.</div></div>`;
+  },
+};
+
+// ------------------------------------------------------------------ Raccourcis clavier (bloc réutilisable)
+
+let hotkeyCapturing = null;   // id du module dont on choisit le raccourci
+let hotkeyRerender = null;
+
+function hotkeyCardHTML(id, { title, desc, extra = '' }) {
+  const s = modState(id);
+  const capturing = hotkeyCapturing === id;
+  return `
+    ${s.hotkeyError && !capturing ? `<div class="banner">${icon('info')}<div class="text">${esc(s.hotkeyError)}</div></div>` : ''}
+    <div class="card">
+      <div class="row wrap" style="gap:22px">
+        <div class="keycap ${capturing ? 'listening' : ''}" style="font-size:20px;height:60px;min-width:120px">${capturing ? 'Appuie…' : esc(s.hotkeyLabel || '—')}</div>
+        <div style="flex:1;min-width:220px"><h3>${esc(title)}</h3><div class="muted">${esc(desc)}</div></div>
+        ${capturing
+          ? `<div class="stack" style="align-items:flex-end"><span class="pill warn"><span class="led"></span>Appuie sur la combinaison (ex. Ctrl + Alt + V)</span><button class="btn" data-hk="cancel">Annuler</button></div>`
+          : `<button class="btn primary" data-hk="capture">${icon('keyboard')} Changer le raccourci</button>`}
+      </div>
+      <div class="row wrap" style="margin-top:18px;gap:28px">
+        <label class="row"><input type="checkbox" class="switch" data-hk-enabled ${s.hotkeyEnabled ? 'checked' : ''}> Raccourci activé</label>
+        ${extra}
+      </div>
+    </div>`;
+}
+
+function bindHotkeyCard(el, id, rerender) {
+  el.addEventListener('click', e => {
+    const b = e.target.closest('[data-hk]');
+    if (!b) return;
+    if (b.dataset.hk === 'capture') {
+      if (hotkeyCapturing) stopHotkeyCapture(true);
+      hotkeyCapturing = id; hotkeyRerender = rerender;
+      moduleAction(id, 'hotkeyCaptureStart');
+      rerender();
+    }
+    if (b.dataset.hk === 'cancel') stopHotkeyCapture(true);
+  });
+  el.addEventListener('change', e => {
+    if (e.target.matches('[data-hk-enabled]')) moduleAction(id, 'setHotkeyEnabled', { value: e.target.checked });
+  });
+}
 
 function stopHotkeyCapture(cancel) {
-  hotkeyCapturing = false;
-  if (cancel) moduleAction('clipboard', 'hotkeyCaptureCancel');
-  ClipboardPage.renderHotkey();
+  const id = hotkeyCapturing, rerender = hotkeyRerender;
+  hotkeyCapturing = null; hotkeyRerender = null;
+  if (cancel && id) moduleAction(id, 'hotkeyCaptureCancel');
+  if (rerender) rerender();
 }
 
 const KEY_NAMES = { Space: 'Espace', Enter: 'Entrée', Tab: 'Tab', Backspace: 'Retour', Insert: 'Inser', Delete: 'Suppr', Home: 'Début', End: 'Fin', PageUp: 'Page ↑', PageDown: 'Page ↓', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' };
@@ -863,9 +1002,9 @@ document.addEventListener('keydown', e => {
   const mods = (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.shiftKey ? 4 : 0) | (e.metaKey ? 8 : 0);
   const keyLabel = isF ? e.key : KEY_NAMES[e.code] || (e.code.startsWith('Key') ? e.code.slice(3) : e.code.startsWith('Digit') ? e.code.slice(5) : e.key.toUpperCase());
   const label = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Maj', e.metaKey && 'Win', keyLabel].filter(Boolean).join(' + ');
-  hotkeyCapturing = false;
-  moduleAction('clipboard', 'setHotkey', { mods, vk: e.keyCode, label });
-  ClipboardPage.renderHotkey();
+  const id = hotkeyCapturing;
+  stopHotkeyCapture(false);
+  moduleAction(id, 'setHotkey', { mods, vk: e.keyCode, label });
   toast('Raccourci : ' + label);
 }, true);
 
@@ -1384,6 +1523,11 @@ const Mock = {
           { id: 3, text: 'https://github.com/Mede2026/ToolBox', time: now - 30, pinned: false },
           { id: 2, text: 'Exercice 4 : 3/4 + 5/6 = 19/12', time: now - 600, pinned: true },
           { id: 1, text: 'Massif de Charlevoix — horaire des remontées', time: now - 7200, pinned: false }] } },
+        { id: 'ocr', name: "Texte à l'écran", description: "Sélectionne une zone de l'écran : le texte est lu (Tesseract) et copié.", enabled: true, running: true, state: {
+          hotkeyEnabled: true, hotkeyLabel: 'Ctrl + Alt + T', hotkeyError: '', singleLine: false, notify: true, status: 'idle', detail: '', engineLoaded: false,
+          langs: [['fra', 'Français', 1130365, true, true], ['eng', 'Anglais', 4113088, true, true], ['spa', 'Espagnol', 2294433, false, false], ['deu', 'Allemand', 1525436, false, false], ['ita', 'Italien', 2701314, false, false], ['por', 'Portugais', 1982756, false, false]]
+            .map(([code, name, size, installed, selected]) => ({ code, name, size, installed, selected })),
+          history: [{ id: 1, text: 'Chapitre 3 — Les fractions équivalentes\nDeux fractions sont équivalentes si elles représentent la même quantité.', time: now - 90, ms: 640 }] } },
         { id: 'app_launcher', name: "Raccourcis d'apps", description: 'Lance plusieurs apps d\'un seul clic.', enabled: true, running: true, state: { groups: [
           { id: 'g1', name: 'Devoirs', emoji: '📚', items: ['C:\\Program Files\\Microsoft Office\\WINWORD.EXE', 'https://www.alloprof.qc.ca'] },
           { id: 'g2', name: 'DJ', emoji: '🎧', items: ['C:\\Program Files\\rekordbox\\rekordbox.exe'] }] } },
@@ -1415,7 +1559,8 @@ const Mock = {
     else if (msg.type === 'setSetting') s.app[msg.key] = msg.value;
     else if (msg.type === 'pickFile') return setTimeout(() => receive({ type: 'filePicked', requestId: msg.requestId, path: 'C:\\Program Files\\Exemple\\app.exe' }), 100);
     else if (msg.type === 'moduleAction' && msg.id === 'converter' && msg.action === 'setPref') mod('converter').state[msg.payload.key] = msg.payload.value;
-    else if (msg.type === 'moduleAction' && msg.id === 'clipboard' && msg.action === 'setHotkey') mod('clipboard').state.hotkeyLabel = msg.payload.label;
+    else if (msg.type === 'moduleAction' && msg.action === 'setHotkey') mod(msg.id).state.hotkeyLabel = msg.payload.label;
+    else if (msg.type === 'moduleAction' && msg.id === 'ocr' && msg.action === 'setLangs') mod('ocr').state.langs.forEach(l => { l.selected = msg.payload.list.includes(l.code); });
     else return;
     receive(JSON.parse(JSON.stringify(s)));
   },

@@ -24,6 +24,7 @@ enum : UINT {
   WM_APP_UPDATE,                  // l'updater a changé d'état
   WM_APP_SHOW,                    // une 2e instance demande d'afficher la fenêtre
   WM_APP_CLIP_POPUP,              // raccourci du presse-papiers pressé
+  WM_APP_OCR_START,               // raccourci « Texte à l'écran » (wparam = 1 : depuis l'interface)
 };
 
 class App {
@@ -66,6 +67,14 @@ class App {
   void CreatePopupWebView();
   void OnPopupMessage(const nlohmann::json& msg);
   void PasteIntoPreviousWindow();
+
+  // Texte à l'écran (OCR)
+  void StartOcr(bool from_ui);
+  void BeginOcrNow();
+  bool ocr_restore_main_ = false;
+
+  // Notification près de l'horloge (bulle de l'icône ToolBox).
+  void Notify(const std::string& title, const std::string& text);
 
   void ApplyStartWithWindows();
   void MaybeAutoUpdate();

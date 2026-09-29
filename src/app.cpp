@@ -11,6 +11,7 @@
 #include "modules/enter_guard.h"
 #include "modules/place_launcher.h"
 #include "modules/process_manager.h"
+#include "modules/screen_ocr.h"
 #include "modules/system_monitor.h"
 #include "resource_ids.h"
 #include "util.h"
@@ -25,6 +26,7 @@ namespace {
 constexpr UINT_PTR kTimerTick = 1;          // Tick des modules
 constexpr UINT_PTR kTimerUpdate = 2;        // vérification des mises à jour
 constexpr UINT_PTR kTimerLive = 3;          // données en direct (fenêtre visible seulement)
+constexpr UINT_PTR kTimerOcr = 4;           // délai avant la capture (le temps de cacher ToolBox)
 constexpr UINT kLiveMs = 1000;
 constexpr UINT kTickMs = 10 * 1000;
 constexpr UINT kUpdateEveryMs = 6 * 60 * 60 * 1000;
@@ -81,6 +83,8 @@ void App::CreateModules() {
   auto push = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_PUSH_STATE, 0, 0); };
 
   auto clip_popup = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_CLIP_POPUP, 0, 0); };
+  auto ocr_hotkey = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_OCR_START, 0, 0); };
+  auto notify = [this](const std::string& title, const std::string& text) { Notify(title, text); };
 
   // ---- Liste des fonctions (ordre = ordre dans le menu) : ajouter les nouveaux modules ici ----
   // Les fonctions toujours actives d'abord.
@@ -89,6 +93,7 @@ void App::CreateModules() {
   modules_.push_back(std::make_unique<ProcessManager>());
   modules_.push_back(std::make_unique<EnterGuard>(push));
   modules_.push_back(std::make_unique<ClipboardHistory>(hwnd_, push, clip_popup));
+  modules_.push_back(std::make_unique<ScreenOcr>(hwnd_, instance_, push, ocr_hotkey, notify));
   modules_.push_back(std::make_unique<AppLauncher>());
   modules_.push_back(std::make_unique<PlaceLauncher>(push));
 
@@ -230,6 +235,9 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
         for (auto& m : modules_) {
           if (m->Running()) m->Tick();
         }
+      } else if (wparam == kTimerOcr) {
+        KillTimer(hwnd_, kTimerOcr);
+        BeginOcrNow();
       } else if (wparam == kTimerLive) {
         PushLive();
       } else if (wparam == kTimerUpdate) {
@@ -245,11 +253,16 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
 
     case WM_CLIPBOARDUPDATE:
     case WM_HOTKEY:
+    case WM_TOOLBOX_OCR_DONE:
       for (auto& m : modules_) m->OnWindowMessage(msg, wparam, lparam);
       return 0;
 
     case WM_APP_CLIP_POPUP:
       ShowClipboardPopup();
+      return 0;
+
+    case WM_APP_OCR_START:
+      StartOcr(wparam != 0);
       return 0;
 
     case WM_APP_SHOW:
@@ -460,6 +473,9 @@ void App::OnWebMessage(const json& msg) {
     if (page == "location") {
       ShellExecuteW(nullptr, L"open", L"ms-settings:privacy-location", nullptr, nullptr, SW_SHOWNORMAL);
     }
+    return;
+  } else if (type == "ocrCapture") {
+    StartOcr(true);
     return;
   } else if (type == "openDataDir") {
     ShellExecuteW(nullptr, L"open", util::DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -714,6 +730,42 @@ LRESULT CALLBACK App::PopupProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     }
   }
   return DefWindowProcW(hwnd, msg, wparam, lparam);
+}
+
+// ---------------------------------------------------------------- Texte à l'écran (OCR)
+
+void App::StartOcr(bool from_ui) {
+  Module* ocr = FindModule("ocr");
+  if (!ocr || !ocr->Running()) return;
+  if (from_ui && IsWindowVisible(hwnd_)) {
+    // Bouton dans ToolBox : on cache la fenêtre pour qu'elle ne soit pas sur la photo.
+    ocr_restore_main_ = true;
+    HideMainWindow();
+    SetTimer(hwnd_, kTimerOcr, 250, nullptr);
+    return;
+  }
+  BeginOcrNow();
+}
+
+void App::BeginOcrNow() {
+  auto* ocr = static_cast<ScreenOcr*>(FindModule("ocr"));
+  if (!ocr) return;
+  ocr->BeginCapture([this] {
+    if (ocr_restore_main_) {
+      ocr_restore_main_ = false;
+      ShowMainWindow();
+    }
+  });
+}
+
+void App::Notify(const std::string& title, const std::string& text) {
+  if (!tray_.cbSize) return;
+  NOTIFYICONDATAW n = tray_;
+  n.uFlags = NIF_INFO;
+  n.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
+  wcsncpy_s(n.szInfoTitle, util::FromUtf8(title).c_str(), _TRUNCATE);
+  wcsncpy_s(n.szInfo, util::FromUtf8(text).c_str(), _TRUNCATE);
+  Shell_NotifyIconW(NIM_MODIFY, &n);
 }
 
 // ---------------------------------------------------------------- Démarrage / mises à jour

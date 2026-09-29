@@ -18,6 +18,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # Version figée de vcpkg (gestionnaire de bibliothèques C++) : même Tesseract à chaque compilation.
+  VCPKG_TAG: '2026.07.29'
+
 jobs:
   build:
     runs-on: windows-latest
@@ -45,6 +49,24 @@ jobs:
         with:
           arch: x64
 
+      - name: Installer vcpkg
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:VCPKG_TAG https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\.vcpkg-bin" | Out-Null
+          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" >> $env:GITHUB_ENV
+          "VCPKG_DEFAULT_BINARY_CACHE=$env:GITHUB_WORKSPACE\.vcpkg-bin" >> $env:GITHUB_ENV
+
+      # Tesseract prend ~15 min à compiler la première fois : on garde le résultat en cache.
+      - name: Restaurer le cache vcpkg
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .vcpkg-bin
+          key: vcpkg-${{ env.VCPKG_TAG }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
+          restore-keys: vcpkg-${{ env.VCPKG_TAG }}-
+
       - name: Cache des dépendances
         uses: actions/cache@v4
         with:
@@ -52,7 +74,14 @@ jobs:
           key: deps-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Configurer
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DTOOLBOX_VERSION=${{ steps.ver.outputs.version }}"
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DTOOLBOX_VERSION=${{ steps.ver.outputs.version }}" "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Enregistrer le cache vcpkg
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .vcpkg-bin
+          key: vcpkg-${{ env.VCPKG_TAG }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
 
       - name: Compiler
         run: cmake --build build --config Release
@@ -60,7 +89,10 @@ jobs:
       - name: Diagnostic (en cas d'échec)
         if: failure()
         shell: pwsh
-        run: Get-Content build/generated/toolbox.rc -ErrorAction SilentlyContinue | Select-Object -First 12
+        run: |
+          Get-Content build/generated/toolbox.rc -ErrorAction SilentlyContinue | Select-Object -First 12
+          Get-Content build/vcpkg-manifest-install.log -ErrorAction SilentlyContinue | Select-Object -Last 60
+          Get-ChildItem "$env:VCPKG_ROOT/buildtrees" -Recurse -Filter "*-err.log" -ErrorAction SilentlyContinue | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Tail 40 }
 
       - name: Préparer les fichiers
         shell: pwsh
