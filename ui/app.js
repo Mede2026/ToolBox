@@ -688,12 +688,12 @@ const EnterGuardPage = {
     <div class="card">
       <div class="hero" style="grid-template-columns:auto 1fr">
         <div style="text-align:center;padding:0 20px">
-          <div class="keycap ${s.capturing ? 'listening' : ''}" style="min-width:96px;height:96px;font-size:40px">${s.capturing ? '…' : esc(s.keyName || '?')}</div>
+          <div class="keycap ${s.capturing ? 'listening' : ''}" style="min-width:64px;height:64px;font-size:28px">${s.capturing ? '…' : esc(s.keyName || '?')}</div>
           <div class="muted" style="margin-top:12px">Touche surveillée</div>
         </div>
         <div>
           <div class="label">Frappes accidentelles corrigées</div>
-          <div class="value big" style="font-size:56px">${nf0.format(s.corrections || 0)}</div>
+          <div class="value big" style="font-size:40px">${nf0.format(s.corrections || 0)}</div>
           <div class="row wrap" style="margin-top:18px">
             ${s.capturing
               ? `<span class="pill warn"><span class="led"></span>Appuie sur la touche à surveiller… (Échap pour annuler)</span>
@@ -953,7 +953,7 @@ function hotkeyCardHTML(id, { title, desc, extra = '' }) {
     ${s.hotkeyError && !capturing ? `<div class="banner">${icon('info')}<div class="text">${esc(s.hotkeyError)}</div></div>` : ''}
     <div class="card">
       <div class="row wrap" style="gap:22px">
-        <div class="keycap ${capturing ? 'listening' : ''}" style="font-size:20px;height:60px;min-width:120px">${capturing ? 'Appuie…' : esc(s.hotkeyLabel || '—')}</div>
+        <div class="keycap ${capturing ? 'listening' : ''}" style="font-size:14px;height:38px;min-width:96px">${capturing ? 'Appuie…' : esc(s.hotkeyLabel || '—')}</div>
         <div style="flex:1;min-width:220px"><h3>${esc(title)}</h3><div class="muted">${esc(desc)}</div></div>
         ${capturing
           ? `<div class="stack" style="align-items:flex-end"><span class="pill warn"><span class="led"></span>Appuie sur la combinaison (ex. Ctrl + Alt + V)</span><button class="btn" data-hk="cancel">Annuler</button></div>`

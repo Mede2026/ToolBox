@@ -1,6 +1,7 @@
 #include "modules/place_launcher.h"
 
 #include <shellapi.h>
+#include <tlhelp32.h>
 #include <wlanapi.h>
 
 #include <algorithm>
@@ -31,6 +32,26 @@ std::vector<std::string> ReadPaths(const json& r) {
   } else if (auto p = r.value("path", ""); !p.empty()) {
     out.push_back(p);
   }
+  return out;
+}
+
+constexpr long long kReopenCooldownSec = 10 * 60;  // fichier (pas une app) : pas deux fois en 10 min
+
+// Chemins complets (minuscules) des programmes en cours d'exécution.
+std::set<std::wstring> RunningExePaths() {
+  std::set<std::wstring> out;
+  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snap == INVALID_HANDLE_VALUE) return out;
+  PROCESSENTRY32W pe{sizeof(pe)};
+  for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+    if (HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID)) {
+      wchar_t path[MAX_PATH * 2];
+      DWORD size = MAX_PATH * 2;
+      if (QueryFullProcessImageNameW(h, 0, path, &size)) out.insert(util::ToLower(std::wstring(path, size)));
+      CloseHandle(h);
+    }
+  }
+  CloseHandle(snap);
   return out;
 }
 
@@ -143,7 +164,7 @@ void PlaceLauncher::HandleAction(const std::string& action, const json& payload)
   } else if (action == "testRule") {
     const std::string id = payload.value("id", "");
     for (auto& r : rules_) {
-      if (r.id == id) Launch(r);
+      if (r.id == id) Launch(r, /*automatic=*/false);
     }
   } else if (action == "locate") {
     geo_->RequestAsync();
@@ -220,7 +241,7 @@ void PlaceLauncher::Tick() {
     // Au démarrage, on attend une position GPS avant de décider (sauf si le Wi-Fi suffit).
     if (!rule.known && !here && !gps_known) continue;
 
-    if (here && (!rule.known || !rule.inside)) Launch(rule);
+    if (here && (!rule.known || !rule.inside)) Launch(rule, /*automatic=*/true);
     if (here != rule.inside || !rule.known) changed = true;
     rule.inside = here;
     rule.known = true;
@@ -228,11 +249,21 @@ void PlaceLauncher::Tick() {
   if (changed && on_change_) on_change_();
 }
 
-void PlaceLauncher::Launch(Rule& rule) {
-  int ok = 0;
+void PlaceLauncher::Launch(Rule& rule, bool automatic) {
+  // Déjà ouvert (ex. après un redémarrage de ToolBox ou une coupure du Wi-Fi) : on ne relance pas.
+  std::set<std::wstring> running;
+  if (automatic) running = RunningExePaths();
+  const bool recently = rule.last_run && NowSeconds() - rule.last_run < kReopenCooldownSec;
+
+  int ok = 0, skipped = 0;
   std::string failed;
   for (const auto& p : rule.paths) {
     const std::wstring path = util::FromUtf8(p);
+    const bool is_exe = util::ToLower(std::filesystem::path(path).extension().wstring()) == L".exe";
+    if (automatic && ((is_exe && running.count(util::ToLower(path))) || (!is_exe && recently))) {
+      ++skipped;
+      continue;
+    }
     const std::wstring dir = std::filesystem::path(path).parent_path().wstring();
     const auto rc = reinterpret_cast<INT_PTR>(
         ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, dir.empty() ? nullptr : dir.c_str(), SW_SHOWNORMAL));
@@ -241,7 +272,8 @@ void PlaceLauncher::Launch(Rule& rule) {
   }
   const std::string label = rule.place.empty() ? rule.ssid : rule.place;
   if (ok) rule.last_run = NowSeconds();
-  last_event_ = label + " : " + std::to_string(ok) + "/" + std::to_string(rule.paths.size()) + " app(s) ouverte(s)" +
+  last_event_ = label + " : " + std::to_string(ok) + " app(s) ouverte(s)" +
+                (skipped ? ", " + std::to_string(skipped) + " déjà ouverte(s)" : "") +
                 (failed.empty() ? "" : " (échec : " + failed + ")");
   if (on_change_) on_change_();
 }

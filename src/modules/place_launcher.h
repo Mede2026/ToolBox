@@ -57,7 +57,8 @@ class PlaceLauncher : public Module {
 
   bool QueryConnectedSsids(std::set<std::string>& out);
   bool NeedsGps() const;
-  void Launch(Rule& rule);
+  // automatic = arrivée détectée : on saute ce qui est déjà ouvert (évite les doublons).
+  void Launch(Rule& rule, bool automatic);
 
   std::function<void()> on_change_;
   bool running_ = false;
