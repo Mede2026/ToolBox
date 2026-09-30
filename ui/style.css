@@ -453,6 +453,11 @@ body.popup #page { max-width: none; height: 100%; }
 .pop-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; max-height: 3.1em; overflow: hidden; font-size: 13.5px; line-height: 1.45; }
 .pop-pin { opacity: 0; min-height: 26px; min-width: 26px; padding: 3px; }
 .pop-item:hover .pop-pin, .pop-item.sel .pop-pin { opacity: .7; }
+.pop-item.snip { align-items: center; }
+.pop-item.snip .pop-text { white-space: normal; max-height: none; }
+.snip-num { flex: none; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+  background: var(--surface-2, rgba(255,255,255,.06)); color: var(--text-2); font-size: 12px; font-weight: 600; }
+.snip-num:empty { visibility: hidden; }
 .pop-foot { padding: 8px 16px; border-top: 1px solid var(--card-border); color: var(--text-3); font-size: 12px; }
 
 /* ------------------------------------------------------------ Texte à l'écran */

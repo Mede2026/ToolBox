@@ -13,6 +13,7 @@ Chaque fonction peut être **activée ou désactivée** depuis la barre latéral
 | **Programmes** | Arrête les programmes inutiles (★ + « Mode léger ») et les relance d'un clic |
 | **Garde Enter** | Efface la touche voisine d'Enter (`à`, `\`, `#`…) frappée par accident, même si Enter est déjà pressé |
 | **Presse-papiers** | Historique de tout ce qui est copié + **fenêtre rapide** ouverte par un raccourci au choix (Ctrl + Alt + V par défaut) qui colle l'élément choisi ; les mots de passe des gestionnaires sont ignorés |
+| **Textes rapides** | Textes préparés (courriel, adresse, signature…) : un raccourci (Ctrl + Alt + Q par défaut) ouvre une petite fenêtre, un clic ou un chiffre colle le texte là où on écrivait ; le presse-papiers d'avant est remis en place |
 | **Capture d'écran** | Un raccourci fige l'écran et on sélectionne une zone : **image** (Ctrl + Alt + S) copiée et enregistrée en PNG dans Images\Captures ToolBox, ou **texte** (Ctrl + Alt + T) lu par **Tesseract** (OCR) et copié |
 | **Statistiques** | Temps d'écran par app, processeur et mémoire sur 48 h, compteurs des fonctions ToolBox (tout reste sur le PC) |
 | **Pipette** | Un raccourci (Ctrl + Alt + C) affiche une loupe : clic sur un pixel, sa couleur est copiée en HEX, RGB ou HSL |

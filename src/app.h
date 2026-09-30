@@ -25,6 +25,7 @@ enum : UINT {
   WM_APP_SHOW,                    // une 2e instance demande d'afficher la fenêtre
   WM_APP_CLIP_POPUP,              // raccourci du presse-papiers pressé
   WM_APP_OCR_START,               // capture : wparam = mode (0 texte, 1 image, 2 pipette)
+  WM_APP_SNIP_POPUP,              // raccourci des textes rapides pressé
 };
 
 // Libère le verrou « une seule ToolBox » (main.cpp).
@@ -66,9 +67,10 @@ class App {
   Module* FindModule(const std::string& id);
   bool ModuleEnabled(const std::string& id);
 
-  // Petite fenêtre de l'historique du presse-papiers (ouverte par raccourci clavier)
+  // Petite fenêtre rapide (ouverte par raccourci clavier) : historique du presse-papiers ou textes rapides.
   static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
-  void ShowClipboardPopup();
+  void ShowPopup(bool snippets);
+  bool PopupWanted();  // une des deux fonctions qui utilisent la fenêtre rapide est active
   void PreparePopup();  // crée la fenêtre rapide à l'avance (ouverture instantanée)
   void HidePopup();
   void CreatePopupWebView();
@@ -102,6 +104,9 @@ class App {
   HWND popup_hwnd_ = nullptr;
   HWND prev_foreground_ = nullptr;
   bool popup_pasting_ = false;
+  bool popup_snippets_ = false;      // fenêtre affichée en mode « textes rapides »
+  std::wstring clip_to_restore_;     // presse-papiers remis en place après un texte rapide
+  DWORD clip_restore_seq_ = 0;
   Microsoft::WRL::ComPtr<ICoreWebView2Controller> popup_controller_;
   Microsoft::WRL::ComPtr<ICoreWebView2> popup_webview_;
 

@@ -59,6 +59,7 @@ function toast(msg) {
 
 // Icônes (traits 24×24, style Fluent)
 const ICONS = {
+  text: 'M4 6h16M4 10.5h16M4 15h10M4 19.5h6',
   home: 'M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z',
   monitor: 'M4 19V11M9.3 19V5M14.6 19v-7M20 19V8',
   keyboard: 'M3.5 6.5h17a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-17a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zM7 10h.01M10.5 10h.01M14 10h.01M17.5 10h.01M8 14h8',
@@ -147,7 +148,7 @@ function receive(msg) {
       renderNav();
       break;
     case 'popupShown':
-      Popup.shown();
+      Popup.shown(msg.mode);
       break;
     case 'filePicked': {
       const resolve = pendingPicks.get(msg.requestId);
@@ -171,6 +172,7 @@ const PAGES = [
   { id: 'processes', label: 'Programmes', icon: 'cpu', module: 'processes', keys: 'taches tuer fermer arreter relancer ressources lent mode leger', page: () => ProcessesPage },
   { id: 'enter_guard', label: 'Garde Enter', icon: 'keyboard', module: 'enter_guard', keys: 'a clavier touche accident entree faute', page: () => EnterGuardPage },
   { id: 'clipboard', label: 'Presse-papiers', icon: 'clipboard', module: 'clipboard', keys: 'copier coller ctrl c v historique texte', page: () => ClipboardPage },
+  { id: 'snippets', label: 'Textes rapides', icon: 'text', module: 'snippets', keys: 'texte rapide courriel email adresse signature coller raccourci modele phrase', page: () => SnippetsPage },
   { id: 'ocr', label: "Capture d'écran", icon: 'camera', module: 'ocr', keys: 'capture screenshot image png ocr tesseract texte ecran lire copier scanner photo', page: () => OcrPage },
   { id: 'color', label: 'Pipette', icon: 'drop', module: 'color', keys: 'pipette couleur color picker hex rgb hsl pixel', page: () => ColorPage },
   { id: 'app_launcher', label: "Raccourcis d'apps", icon: 'apps', module: 'app_launcher', keys: 'lancer groupe raccourci ouvrir apps', page: () => AppLauncherPage },
@@ -696,7 +698,7 @@ const ProcessesPage = {
 const EVENT_LABELS = {
   copy: ['Textes copiés', 'clipboard'], ocr: ['Textes lus (OCR)', 'scan'], screenshot: ["Captures d'écran", 'camera'],
   enterFix: ['Fautes Enter corrigées', 'keyboard'], appGroup: ["Groupes d'apps lancés", 'apps'],
-  colorPick: ['Couleurs copiées', 'drop'], placeLaunch: ['Lancements par lieu', 'place'], programStop: ['Programmes arrêtés', 'stop'], programRelaunch: ['Programmes relancés', 'update'],
+  colorPick: ['Couleurs copiées', 'drop'], snippet: ['Textes rapides collés', 'text'], placeLaunch: ['Lancements par lieu', 'place'], programStop: ['Programmes arrêtés', 'stop'], programRelaunch: ['Programmes relancés', 'update'],
 };
 let statsRange = 'today';
 
@@ -1227,25 +1229,30 @@ document.addEventListener('keydown', e => {
 // ------------------------------------------------------------------ Fenêtre rapide (popup du presse-papiers)
 
 const Popup = {
+  mode: 'clipboard',  // ou 'snippets' (textes rapides)
   q: '',
   sel: 0,
-  built: false,
+  built: '',
   items() {
     const q = fold(this.q.trim());
+    if (this.mode === 'snippets') {
+      return (modState('snippets').items || []).filter(i => !q || fold(i.label + ' ' + i.text).includes(q));
+    }
     const all = modState('clipboard').items || [];
     const list = all.filter(i => !q || fold(i.text).includes(q));
     return [...list.filter(i => i.pinned), ...list.filter(i => !i.pinned)];
   },
   build() {
-    const s = modState('clipboard');
+    const snip = this.mode === 'snippets';
+    const s = modState(snip ? 'snippets' : 'clipboard');
     $('#page').innerHTML = `
       <div class="pop">
-        <div class="pop-head">${icon('clipboard')}<b>Presse-papiers</b><span class="spacer"></span>
+        <div class="pop-head">${icon(snip ? 'text' : 'clipboard')}<b>${snip ? 'Textes rapides' : 'Presse-papiers'}</b><span class="spacer"></span>
           <button class="btn ghost icon-only" id="pop-open" title="Ouvrir ToolBox">${icon('apps')}</button>
           <button class="btn ghost icon-only" id="pop-close" title="Fermer (Échap)">${icon('close')}</button></div>
         <div class="pop-search">${icon('search')}<input type="search" id="pop-q" placeholder="Rechercher…" autocomplete="off"></div>
         <div class="pop-list" id="pop-list"></div>
-        <div class="pop-foot">↑ ↓ choisir · Entrée ${s.autoPaste ? 'coller' : 'copier'} · Échap fermer</div>
+        <div class="pop-foot">${snip ? '1 à 9 ou clic · ' : '↑ ↓ choisir · '}Entrée ${s.autoPaste ? 'coller' : 'copier'} · Échap fermer</div>
       </div>`;
     $('#pop-q').addEventListener('input', e => { this.q = e.target.value; this.sel = 0; this.renderList(); });
     $('#pop-close').addEventListener('click', () => send({ type: 'popupClose' }));
@@ -1253,25 +1260,34 @@ const Popup = {
     $('#pop-list').addEventListener('click', e => {
       const pin = e.target.closest('[data-pin]');
       if (pin) { moduleAction('clipboard', 'pin', { id: +pin.dataset.pin }); return; }
-      const it = e.target.closest('[data-id]');
-      if (it) this.pick(+it.dataset.id);
+      const it = e.target.closest('[data-idx]');
+      if (it) this.pick(this.items()[+it.dataset.idx]);
     });
     $('#pop-list').addEventListener('mousemove', e => {
       const it = e.target.closest('[data-idx]');
       if (it && +it.dataset.idx !== this.sel) { this.sel = +it.dataset.idx; this.highlight(); }
     });
-    document.addEventListener('keydown', e => {
-      const n = this.items().length;
-      if (e.key === 'Escape') { e.preventDefault(); send({ type: 'popupClose' }); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); this.sel = Math.min(n - 1, this.sel + 1); this.highlight(true); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); this.sel = Math.max(0, this.sel - 1); this.highlight(true); }
-      else if (e.key === 'Enter') { e.preventDefault(); const it = this.items()[this.sel]; if (it) this.pick(it.id); }
-    });
-    this.built = true;
+    if (!this.keys) {
+      this.keys = true;
+      document.addEventListener('keydown', e => {
+        const list = this.items(), n = list.length;
+        if (e.key === 'Escape') { e.preventDefault(); send({ type: 'popupClose' }); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); this.sel = Math.min(n - 1, this.sel + 1); this.highlight(true); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); this.sel = Math.max(0, this.sel - 1); this.highlight(true); }
+        else if (e.key === 'Enter') { e.preventDefault(); this.pick(list[this.sel]); }
+        else if (this.mode === 'snippets' && !this.q && /^[1-9]$/.test(e.key) && !e.ctrlKey && !e.altKey) {
+          e.preventDefault(); this.pick(list[+e.key - 1]);
+        }
+      });
+    }
+    this.built = this.mode;
   },
-  pick(id) { send({ type: 'clipPaste', id }); },
+  pick(item) {
+    if (!item) return;
+    send(this.mode === 'snippets' ? { type: 'snipPaste', id: item.id } : { type: 'clipPaste', id: item.id });
+  },
   render() {
-    if (!this.built) this.build();
+    if (this.built !== this.mode) this.build();
     this.renderList();
   },
   renderList() {
@@ -1279,8 +1295,17 @@ const Popup = {
     if (!el) return;
     const items = this.items();
     if (this.sel >= items.length) this.sel = Math.max(0, items.length - 1);
+    if (this.mode === 'snippets') {
+      el.innerHTML = items.length ? items.map((i, k) => `
+        <div class="pop-item snip${k === this.sel ? ' sel' : ''}" data-idx="${k}">
+          ${!this.q && k < 9 ? `<span class="snip-num">${k + 1}</span>` : ''}
+          <div class="pop-text"><b>${esc(i.label || i.text.split('\n')[0])}</b>${i.label ? `<div class="faint small ellipsis">${esc(i.text.split('\n')[0])}</div>` : ''}</div>
+        </div>`).join('')
+        : `<div class="empty">${this.q ? 'Aucun résultat' : 'Aucun texte pour l\'instant.<br>Ajoute ton courriel, ton adresse… dans ToolBox.'}</div>`;
+      return;
+    }
     el.innerHTML = items.length ? items.map((i, k) => `
-      <div class="pop-item${k === this.sel ? ' sel' : ''}${i.pinned ? ' pinned' : ''}" data-id="${i.id}" data-idx="${k}">
+      <div class="pop-item${k === this.sel ? ' sel' : ''}${i.pinned ? ' pinned' : ''}" data-idx="${k}">
         <div class="pop-text">${esc(i.text.length > 300 ? i.text.slice(0, 300) + '…' : i.text)}</div>
         <button class="btn ghost icon-only pop-pin" data-pin="${i.id}" title="${i.pinned ? 'Désépingler' : 'Épingler'}">${icon('pin')}</button>
       </div>`).join('') : `<div class="empty">${this.q ? 'Aucun résultat' : 'Rien de copié pour l\'instant'}</div>`;
@@ -1289,11 +1314,87 @@ const Popup = {
     $$('.pop-item').forEach((el, k) => el.classList.toggle('sel', k === this.sel));
     if (scroll) $('.pop-item.sel')?.scrollIntoView({ block: 'nearest' });
   },
-  shown() {
+  shown(mode) {
+    this.mode = mode === 'snippets' ? 'snippets' : 'clipboard';
     this.q = ''; this.sel = 0;
+    if (S.modules && this.built !== this.mode) this.build();
     const q = $('#pop-q');
     if (q) { q.value = ''; q.focus(); }
     this.renderList();
+  },
+};
+
+// ------------------------------------------------------------------ Textes rapides
+
+const SnippetsPage = {
+  render() {
+    const items = modState('snippets').items || [];
+    return `
+    <div id="sn-hotkey"></div>
+    <div class="row" style="margin:14px 0 10px"><div class="section-title" style="margin:0">Mes textes</div><span class="spacer"></span>
+      <button class="btn primary" id="sn-new">${icon('plus')} Nouveau texte</button></div>
+    <div class="list">${items.length ? items.map((i, k) => `
+      <div class="list-item" data-id="${esc(i.id)}">
+        <span class="snip-num">${k < 9 ? k + 1 : ''}</span>
+        <div class="main" style="min-width:0"><b>${esc(i.label || 'Sans nom')}</b><div class="faint small ellipsis">${esc(i.text.replace(/\n/g, ' ⏎ '))}</div></div>
+        <button class="btn ghost icon-only" data-act="up" title="Monter" ${k ? '' : 'disabled'}>↑</button>
+        <button class="btn ghost icon-only" data-act="down" title="Descendre" ${k < items.length - 1 ? '' : 'disabled'}>↓</button>
+        <button class="btn ghost icon-only" data-act="copy" title="Copier">${icon('copy')}</button>
+        <button class="btn ghost icon-only" data-act="edit" title="Modifier">${icon('edit')}</button>
+      </div>`).join('')
+      : `<div class="empty">Aucun texte pour l'instant. Ex. « Mon courriel », « Mon adresse », « Ma signature ».</div>`}</div>`;
+  },
+  bind(root) {
+    bindHotkeyCard($('#sn-hotkey', root), 'snippets', () => this.renderHotkey());
+    $('#sn-hotkey', root).addEventListener('change', e => {
+      if (e.target.id === 'sn-paste') moduleAction('snippets', 'setAutoPaste', { value: e.target.checked });
+    });
+    this.renderHotkey();
+    $('#sn-new', root).addEventListener('click', () => this.edit(null));
+    $$('[data-act]', root).forEach(b => b.addEventListener('click', () => {
+      const id = b.closest('[data-id]').dataset.id;
+      const act = b.dataset.act;
+      if (act === 'edit') this.edit(id);
+      else if (act === 'copy') { moduleAction('snippets', 'copy', { id }); toast('Copié !'); }
+      else moduleAction('snippets', 'move', { id, dir: act === 'up' ? -1 : 1 });
+    }));
+  },
+  update() { if (!$('#dialog').open) renderPage(true); },
+  renderHotkey() {
+    const el = document.getElementById('sn-hotkey');
+    if (!el) return;
+    el.innerHTML = hotkeyCardHTML('snippets', {
+      title: 'Fenêtre des textes rapides',
+      desc: "Ce raccourci ouvre une petite fenêtre avec tes textes. Clique sur un texte (ou tape son numéro) : il est collé là où tu écrivais.",
+      extra: `<label class="row"><input type="checkbox" class="switch" id="sn-paste" ${modState('snippets').autoPaste ? 'checked' : ''}> Coller automatiquement</label>`,
+    });
+  },
+  edit(id) {
+    const existing = (modState('snippets').items || []).find(i => i.id === id);
+    const it = existing ? { ...existing } : { id: '', label: '', text: '' };
+    const dlg = $('#dialog');
+    dlg.innerHTML = `
+      <div class="dlg-body">
+        <h2>${existing ? 'Modifier le texte' : 'Nouveau texte'}</h2>
+        <label class="field"><span>Nom (ce que tu vois dans la petite fenêtre)</span><input type="text" id="sn-label" value="${esc(it.label)}" placeholder="Ex. Mon courriel" maxlength="60"></label>
+        <label class="field"><span>Texte à coller</span><textarea id="sn-text" rows="5" placeholder="Ex. prenom.nom@exemple.com">${esc(it.text)}</textarea></label>
+      </div>
+      <div class="dlg-foot">
+        ${existing ? `<button class="btn danger left" id="sn-del">${icon('trash')} Supprimer</button>` : ''}
+        <button class="btn" id="sn-cancel">Annuler</button>
+        <button class="btn primary" id="sn-save">Enregistrer</button>
+      </div>`;
+    $('#sn-cancel', dlg).addEventListener('click', () => dlg.close());
+    $('#sn-del', dlg)?.addEventListener('click', () => { moduleAction('snippets', 'deleteItem', { id }); dlg.close(); });
+    $('#sn-save', dlg).addEventListener('click', () => {
+      const text = $('#sn-text', dlg).value;
+      if (!text.trim()) { $('#sn-text', dlg).focus(); return; }
+      moduleAction('snippets', 'saveItem', { item: { id: it.id, label: $('#sn-label', dlg).value.trim(), text } });
+      dlg.close();
+    });
+    dlg.showModal();
+    $('#sn-label', dlg).focus();
+    dlg.addEventListener('close', () => renderPage(true), { once: true });
   },
 };
 
@@ -1756,6 +1857,11 @@ const Mock = {
           { id: 3, text: 'https://github.com/Mede2026/ToolBox', time: now - 30, pinned: false },
           { id: 2, text: 'Exercice 4 : 3/4 + 5/6 = 19/12', time: now - 600, pinned: true },
           { id: 1, text: 'Massif de Charlevoix — horaire des remontées', time: now - 7200, pinned: false }] } },
+        { id: 'snippets', name: 'Textes rapides', description: 'Colle ton courriel, ton adresse… en un clic.', enabled: true, running: true, state: {
+          hotkeyEnabled: true, hotkeyLabel: 'Ctrl + Alt + Q', hotkeyError: '', autoPaste: true, items: [
+            { id: 's1', label: 'Mon courriel', text: 'mederic@exemple.com' },
+            { id: 's2', label: 'Mon adresse', text: '123, rue Exemple\nBoucherville (Québec)' },
+            { id: 's3', label: 'Signature', text: 'Merci !\nMédéric' }] } },
         { id: 'ocr', name: "Capture d'écran", description: "Capture une zone de l'écran en image, ou lis le texte qu'elle contient (OCR).", enabled: true, running: true, state: {
           hotkeyEnabled: true, hotkeyLabel: 'Ctrl + Alt + T', hotkeyError: '', shot_hotkeyEnabled: true, shot_hotkeyLabel: 'Ctrl + Alt + S', shot_hotkeyError: '',
           shotSave: true, shotFolder: 'C:\\Users\\Mederic\\Pictures\\Captures ToolBox',

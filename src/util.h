@@ -30,8 +30,11 @@ std::wstring ProcessPath(DWORD pid);
 // Ajoute une ligne à %APPDATA%\ToolBox\crash.log (erreur non fatale).
 void LogError(const std::string& what);
 
-// Met du texte dans le presse-papiers.
-bool SetClipboardText(HWND owner, const std::wstring& text);
+// Met du texte dans le presse-papiers. `hidden` : ignoré par les historiques (ToolBox, Win + V).
+bool SetClipboardText(HWND owner, const std::wstring& text, bool hidden = false);
+
+// Texte actuel du presse-papiers (vide s'il n'y a pas de texte).
+std::wstring GetClipboardText(HWND owner);
 
 // Met une fenêtre au premier plan même si ToolBox n'y est pas (ouverte par raccourci clavier).
 void ForceForeground(HWND hwnd);

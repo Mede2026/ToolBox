@@ -126,9 +126,20 @@ void LogError(const std::string& what) {
   log << when << "  (non fatale) " << what << "\n";
 }
 
-bool SetClipboardText(HWND owner, const std::wstring& text) {
-  for (int i = 0; i < 10 && !OpenClipboard(owner); ++i) Sleep(20);
+bool SetClipboardText(HWND owner, const std::wstring& text, bool hidden) {
+  bool open = false;
+  for (int i = 0; i < 10 && !(open = OpenClipboard(owner)); ++i) Sleep(20);
+  if (!open) return false;
   EmptyClipboard();
+  if (hidden) {
+    // Convention Windows (gestionnaires de mots de passe) : « ne pas mémoriser ce contenu ».
+    static const UINT exclude = RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing");
+    if (HGLOBAL flag = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD))) {
+      *static_cast<DWORD*>(GlobalLock(flag)) = 0;
+      GlobalUnlock(flag);
+      if (!SetClipboardData(exclude, flag)) GlobalFree(flag);
+    }
+  }
   const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
   HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
   bool ok = false;
@@ -163,6 +174,22 @@ void ForceForeground(HWND hwnd) {
   SetActiveWindow(hwnd);
   SetFocus(hwnd);
   if (attached) AttachThreadInput(me, fg_thread, FALSE);
+}
+
+std::wstring GetClipboardText(HWND owner) {
+  std::wstring text;
+  if (!IsClipboardFormatAvailable(CF_UNICODETEXT)) return text;
+  bool open = false;
+  for (int i = 0; i < 10 && !(open = OpenClipboard(owner)); ++i) Sleep(20);
+  if (!open) return text;
+  if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+    if (auto* p = static_cast<const wchar_t*>(GlobalLock(h))) {
+      text.assign(p, wcsnlen(p, GlobalSize(h) / sizeof(wchar_t)));
+      GlobalUnlock(h);
+    }
+  }
+  CloseClipboard();
+  return text;
 }
 
 std::wstring UserFirstName() {

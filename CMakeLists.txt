@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Version : la GitHub Action la remplace par celle du tag (ex. v0.2.0 -> 0.2.0).
-set(TOOLBOX_VERSION "0.4.3" CACHE STRING "Version de ToolBox")
+set(TOOLBOX_VERSION "0.5.0" CACHE STRING "Version de ToolBox")
 
 # Dépendances C++ via vcpkg (Tesseract). Le fichier vcpkg.json liste les bibliothèques.
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
@@ -83,6 +83,7 @@ add_executable(ToolBox WIN32
   src/modules/place_launcher.cpp
   src/modules/process_manager.cpp
   src/modules/screen_ocr.cpp
+  src/modules/snippets.cpp
   src/modules/stats.cpp
   src/modules/system_monitor.cpp
   ${CMAKE_BINARY_DIR}/generated/toolbox.rc

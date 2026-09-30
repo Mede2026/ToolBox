@@ -9,6 +9,7 @@
 #include "modules/app_launcher.h"
 #include "modules/color_picker.h"
 #include "modules/clipboard_history.h"
+#include "modules/snippets.h"
 #include "modules/enter_guard.h"
 #include "modules/place_launcher.h"
 #include "modules/process_manager.h"
@@ -87,6 +88,7 @@ void App::CreateModules() {
   auto push = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_PUSH_STATE, 0, 0); };
 
   auto clip_popup = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_CLIP_POPUP, 0, 0); };
+  auto snip_popup = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_SNIP_POPUP, 0, 0); };
   auto ocr_hotkey = [hwnd = hwnd_](bool shot) { PostMessageW(hwnd, WM_APP_OCR_START, shot ? 1 : 0, 0); };
   auto color_hotkey = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_OCR_START, 2, 0); };
   auto notify = [this](const std::string& title, const std::string& text) { Notify(title, text); };
@@ -99,6 +101,7 @@ void App::CreateModules() {
   modules_.push_back(std::make_unique<ProcessManager>());
   modules_.push_back(std::make_unique<EnterGuard>(push));
   modules_.push_back(std::make_unique<ClipboardHistory>(hwnd_, push, clip_popup));
+  modules_.push_back(std::make_unique<Snippets>(hwnd_, snip_popup));
   modules_.push_back(std::make_unique<ScreenOcr>(hwnd_, instance_, push, ocr_hotkey, notify));
   modules_.push_back(std::make_unique<ColorPickerModule>(hwnd_, instance_, push, color_hotkey, notify));
   modules_.push_back(std::make_unique<AppLauncher>());
@@ -290,7 +293,11 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_APP_CLIP_POPUP:
-      ShowClipboardPopup();
+      ShowPopup(false);
+      return 0;
+
+    case WM_APP_SNIP_POPUP:
+      ShowPopup(true);
       return 0;
 
     case WM_APP_OCR_START:
@@ -633,10 +640,24 @@ void App::ShowTrayMenu() {
 
 // ---------------------------------------------------------------- Fenêtre « presse-papiers »
 
-void App::ShowClipboardPopup() {
+bool App::PopupWanted() {
+  for (const char* id : {"clipboard", "snippets"}) {
+    if (Module* m = FindModule(id); m && m->Running()) return true;
+  }
+  return false;
+}
+
+void App::ShowPopup(bool snippets) {
   if (!env_) return;
-  auto* clip = static_cast<ClipboardHistory*>(FindModule("clipboard"));
-  if (!clip || !clip->Running()) return;
+  Module* owner = FindModule(snippets ? "snippets" : "clipboard");
+  if (!owner || !owner->Running()) return;
+  // Même raccourci une 2e fois : on ferme.
+  if (popup_hwnd_ && IsWindowVisible(popup_hwnd_) && popup_snippets_ == snippets) {
+    HidePopup();
+    if (prev_foreground_) SetForegroundWindow(prev_foreground_);
+    return;
+  }
+  popup_snippets_ = snippets;
 
   const HWND fg = GetForegroundWindow();
   if (fg != popup_hwnd_) prev_foreground_ = fg;
@@ -646,7 +667,7 @@ void App::ShowClipboardPopup() {
 
   // Près de la souris, sans dépasser de l'écran.
   const UINT dpi = GetDpiForSystem();
-  const int w = MulDiv(400, dpi, 96), h = MulDiv(500, dpi, 96);
+  const int w = MulDiv(snippets ? 340 : 400, dpi, 96), h = MulDiv(snippets ? 420 : 500, dpi, 96);
   POINT pt;
   GetCursorPos(&pt);
   MONITORINFO mi{sizeof(mi)};
@@ -661,14 +682,16 @@ void App::ShowClipboardPopup() {
     popup_controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
   }
   PushState();
-  if (popup_webview_) popup_webview_->PostWebMessageAsJson(L"{\"type\":\"popupShown\"}");
+  if (popup_webview_) {
+    popup_webview_->PostWebMessageAsJson(snippets ? L"{\"type\":\"popupShown\",\"mode\":\"snippets\"}"
+                                                  : L"{\"type\":\"popupShown\",\"mode\":\"clipboard\"}");
+  }
 }
 
 void App::PreparePopup() {
   if (popup_hwnd_ || !env_) return;
   // Au démarrage, seulement si l'option « fenêtre rapide instantanée » est active.
-  Module* clip = FindModule("clipboard");
-  if (!clip || !clip->Running()) return;
+  if (!PopupWanted()) return;
 
   const UINT dpi = GetDpiForSystem();
   WNDCLASSEXW wc{sizeof(wc)};
@@ -678,7 +701,7 @@ void App::PreparePopup() {
   wc.hbrBackground = CreateSolidBrush(RGB(32, 32, 32));
   wc.lpszClassName = kPopupClass;
   RegisterClassExW(&wc);
-  popup_hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kPopupClass, L"Presse-papiers", WS_POPUP | WS_BORDER,
+  popup_hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kPopupClass, L"ToolBox", WS_POPUP | WS_BORDER,
                                 0, 0, MulDiv(400, dpi, 96), MulDiv(500, dpi, 96), nullptr, nullptr, instance_, this);
   const int round = 2;  // DWMWCP_ROUND : coins arrondis sous Windows 11
   DwmSetWindowAttribute(popup_hwnd_, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &round, sizeof(round));
@@ -755,11 +778,30 @@ void App::OnPopupMessage(const json& msg) {
     if (prev_foreground_) SetForegroundWindow(prev_foreground_);
     // Petit délai : la fenêtre d'origine doit reprendre le focus avant le Ctrl + V.
     if (clip->AutoPaste()) SetTimer(popup_hwnd_, 1, 80, nullptr);
+  } else if (type == "snipPaste") {
+    auto* snip = static_cast<Snippets*>(FindModule("snippets"));
+    if (!snip) return;
+    const std::wstring text = snip->Use(msg.value("id", ""));
+    if (text.empty()) return;
+    // On garde le presse-papiers actuel pour le remettre après avoir collé.
+    clip_to_restore_ = snip->AutoPaste() ? util::GetClipboardText(hwnd_) : std::wstring();
+    if (!util::SetClipboardText(hwnd_, text, /*hidden=*/snip->AutoPaste())) return;
+    clip_restore_seq_ = GetClipboardSequenceNumber();
+    popup_pasting_ = true;
+    HidePopup();
+    popup_pasting_ = false;
+    if (prev_foreground_) SetForegroundWindow(prev_foreground_);
+    if (snip->AutoPaste()) SetTimer(popup_hwnd_, 1, 80, nullptr);
   } else if (type == "openMain") {
     HidePopup();
     ShowMainWindow();
   } else {
     OnWebMessage(msg);  // "ready", "moduleAction" (épingler, supprimer)…
+    // Fenêtre créée au moment du raccourci : elle doit savoir quoi afficher.
+    if (type == "ready" && popup_webview_ && IsWindowVisible(popup_hwnd_)) {
+      popup_webview_->PostWebMessageAsJson(popup_snippets_ ? L"{\"type\":\"popupShown\",\"mode\":\"snippets\"}"
+                                                           : L"{\"type\":\"popupShown\",\"mode\":\"clipboard\"}");
+    }
   }
 }
 
@@ -798,7 +840,16 @@ LRESULT CALLBACK App::PopupProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         return 0;
       case WM_TIMER:
         KillTimer(hwnd, wparam);
-        self->PasteIntoPreviousWindow();
+        if (wparam == 1) {
+          self->PasteIntoPreviousWindow();
+          if (!self->clip_to_restore_.empty()) SetTimer(hwnd, 2, 700, nullptr);
+        } else if (wparam == 2) {
+          // Remet ce qui était copié avant, si rien d'autre n'a été copié entre-temps.
+          if (GetClipboardSequenceNumber() == self->clip_restore_seq_) {
+            util::SetClipboardText(self->hwnd_, self->clip_to_restore_, /*hidden=*/true);
+          }
+          self->clip_to_restore_.clear();
+        }
         return 0;
       case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE);
