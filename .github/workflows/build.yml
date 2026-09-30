@@ -84,7 +84,8 @@ jobs:
           $cmakeArgs = @('-S', '.', '-B', 'build', '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
                     "-DTOOLBOX_VERSION=${{ steps.ver.outputs.version }}",
                     "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake",
-                    "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/vcpkg_installed")
+                    "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/vcpkg_installed",
+                    "-DVCPKG_APPLOCAL_DEPS=OFF")  # tout est statique : pas de DLL à copier
           # Cache trouvé : on utilise Tesseract tel quel, sans rien recompiler.
           if ('${{ steps.vcpkg-cache.outputs.cache-hit }}' -eq 'true') { $cmakeArgs += '-DVCPKG_MANIFEST_INSTALL=OFF' }
           cmake @cmakeArgs
