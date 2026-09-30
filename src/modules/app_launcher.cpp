@@ -70,6 +70,7 @@ void AppLauncher::HandleAction(const std::string& action, const json& payload) {
       if (g.id != id) continue;
       int ok = 0;
       for (const auto& item : g.items) ok += Open(item) ? 1 : 0;
+      Emit("appGroup");
       last_event_ = g.name + " : " + std::to_string(ok) + "/" + std::to_string(g.items.size()) + " ouvert(s)";
     }
   } else if (action == "launchItem") {

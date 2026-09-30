@@ -271,7 +271,10 @@ void PlaceLauncher::Launch(Rule& rule, bool automatic) {
     else failed = util::ToUtf8(std::filesystem::path(path).filename().wstring());
   }
   const std::string label = rule.place.empty() ? rule.ssid : rule.place;
-  if (ok) rule.last_run = NowSeconds();
+  if (ok) {
+    rule.last_run = NowSeconds();
+    if (automatic) Emit("placeLaunch");
+  }
   last_event_ = label + " : " + std::to_string(ok) + " app(s) ouverte(s)" +
                 (skipped ? ", " + std::to_string(skipped) + " déjà ouverte(s)" : "") +
                 (failed.empty() ? "" : " (échec : " + failed + ")");

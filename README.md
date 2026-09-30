@@ -13,7 +13,8 @@ Chaque fonction peut être **activée ou désactivée** depuis la barre latéral
 | **Programmes** | Arrête les programmes inutiles (★ + « Mode léger ») et les relance d'un clic |
 | **Garde Enter** | Efface la touche voisine d'Enter (`à`, `\`, `#`…) frappée par accident, même si Enter est déjà pressé |
 | **Presse-papiers** | Historique de tout ce qui est copié + **fenêtre rapide** ouverte par un raccourci au choix (Ctrl + Alt + V par défaut) qui colle l'élément choisi ; les mots de passe des gestionnaires sont ignorés |
-| **Texte à l'écran** | Un raccourci (Ctrl + Alt + T par défaut) fige l'écran : on sélectionne une zone, le texte est lu par **Tesseract** (OCR) et copié. Langues téléchargées au premier usage |
+| **Capture d'écran** | Un raccourci fige l'écran et on sélectionne une zone : **image** (Ctrl + Alt + S) copiée et enregistrée en PNG dans Images\Captures ToolBox, ou **texte** (Ctrl + Alt + T) lu par **Tesseract** (OCR) et copié |
+| **Statistiques** | Temps d'écran par app, processeur et mémoire sur 48 h, compteurs des fonctions ToolBox (tout reste sur le PC) |
 | **Raccourcis d'apps** | Groupes d'apps, de fichiers ou de sites à lancer d'un seul clic |
 | **Lancement par lieu** | Ouvre une ou plusieurs apps quand tu arrives quelque part (Wi-Fi et/ou GPS) |
 
@@ -57,7 +58,7 @@ src/
   settings.cpp          réglages (%APPDATA%\ToolBox\settings.json)
   updater.cpp           mises à jour via les Releases GitHub
   geo.cpp               position (GPS / service de localisation de Windows)
-  screen_select.cpp     écran figé + sélection d'une zone (OCR)
+  screen_select.cpp     écran figé + sélection d'une zone (capture, OCR)
   hotkey.cpp            raccourcis clavier globaux configurables
   http.cpp              téléchargements HTTPS (mises à jour, langues de l'OCR)
   modules/              une fonction = un module (Start / Stop / State / HandleAction)

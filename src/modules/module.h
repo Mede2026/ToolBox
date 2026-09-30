@@ -4,6 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <functional>
 #include <string>
 
 class Settings;
@@ -43,6 +44,14 @@ class Module {
 
   // Messages Windows de la fenêtre principale (ex. WM_CLIPBOARDUPDATE).
   virtual void OnWindowMessage(UINT /*msg*/, WPARAM /*wparam*/, LPARAM /*lparam*/) {}
+
+  // Événements comptés par les Statistiques (ex. "ocr", "copy"). Fil principal seulement.
+  static inline std::function<void(const std::string&)> event_sink;
+
+ protected:
+  static void Emit(const std::string& event) {
+    if (event_sink) event_sink(event);
+  }
 };
 
 // Module sans travail en arrière-plan : toute la logique est dans l'interface (ex. Convertisseur).

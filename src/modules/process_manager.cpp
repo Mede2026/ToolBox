@@ -272,6 +272,7 @@ int ProcessManager::StopProgram(const std::wstring& path_lower, bool force) {
     }
   }
   RememberStopped(targets.front()->path);
+  Emit("programStop");
   return static_cast<int>(targets.size());
 }
 
@@ -289,6 +290,7 @@ void ProcessManager::HandleAction(const std::string& action, const json& payload
   } else if (action == "toggleUseless") {
     const std::string k8 = util::ToUtf8(key);
     if (!useless_.erase(k8)) useless_.insert(k8);
+    last_snapshot_ = 0;  // la liste est renvoyée tout de suite (l'étoile s'affiche sans attendre)
   } else if (action == "stopUseless") {
     int programs = 0;
     for (const auto& u : useless_) programs += StopProgram(util::FromUtf8(u), payload.value("force", false)) > 0;
@@ -306,6 +308,7 @@ void ProcessManager::HandleAction(const std::string& action, const json& payload
       const std::wstring dir = std::filesystem::path(path).parent_path().wstring();
       if (reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, dir.c_str(), SW_SHOWNORMAL)) > 32) {
         ++ok;
+        Emit("programRelaunch");
         it = stopped_.erase(it);
       } else {
         ++it;

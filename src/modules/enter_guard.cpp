@@ -162,6 +162,7 @@ bool EnterGuard::OnKey(WPARAM wparam, const KBDLLHOOKSTRUCT& k) {
       block_guard_up_ = true;
       guard_down_ = true;
       ++corrections_;
+      Emit("enterFix");
       if (on_change_) on_change_();
       return true;
     }
@@ -188,6 +189,7 @@ bool EnterGuard::OnKey(WPARAM wparam, const KBDLLHOOKSTRUCT& k) {
       if (guard_down_) suppress_guard_repeats_ = true;
       SendBackspaceThenEnter(k);
       ++corrections_;
+      Emit("enterFix");
       if (on_change_) on_change_();
       return true;
     }

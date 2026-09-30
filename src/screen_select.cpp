@@ -12,13 +12,14 @@ constexpr COLORREF kAccent = RGB(124, 188, 255);
 
 ScreenSelector* ScreenSelector::active_ = nullptr;
 
-bool ScreenSelector::Start(HINSTANCE instance, Done done) {
+bool ScreenSelector::Start(HINSTANCE instance, std::wstring hint, Done done) {
   if (active_) return false;
-  new ScreenSelector(instance, std::move(done));  // se détruit à la fermeture de sa fenêtre
+  new ScreenSelector(instance, std::move(hint), std::move(done));  // se détruit à la fermeture de sa fenêtre
   return true;
 }
 
-ScreenSelector::ScreenSelector(HINSTANCE instance, Done done) : done_(std::move(done)) {
+ScreenSelector::ScreenSelector(HINSTANCE instance, std::wstring hint, Done done)
+    : done_(std::move(done)), hint_(std::move(hint)) {
   active_ = this;
   vx_ = GetSystemMetrics(SM_XVIRTUALSCREEN);
   vy_ = GetSystemMetrics(SM_YVIRTUALSCREEN);
@@ -120,7 +121,7 @@ void ScreenSelector::Paint(HDC target) {
   GetCursorPos(&pt);
   MONITORINFO mi{sizeof(mi)};
   GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mi);
-  const std::wstring hint = L"Sélectionne le texte à lire  ·  Échap pour annuler";
+  const std::wstring hint = hint_ + L"  ·  Échap pour annuler";
   SelectObject(back_dc_, font_);
   RECT measure{0, 0, 0, 0};
   DrawTextW(back_dc_, hint.c_str(), -1, &measure, DT_CALCRECT | DT_SINGLELINE);

@@ -166,6 +166,7 @@ void ClipboardHistory::Capture() {
   }
   items_.push_front({next_id_++, std::move(text), NowSeconds(), pinned});
   Trim();
+  Emit("copy");
   if (on_change_) on_change_();
 }
 

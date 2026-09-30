@@ -6,6 +6,7 @@
 #include <secext.h>
 
 #include <algorithm>
+#include <vector>
 #include <cwctype>
 
 namespace util {
@@ -72,6 +73,44 @@ std::wstring ForegroundProcessName() {
   }
   CloseHandle(proc);
   return name;
+}
+
+std::string FileDescription(const std::wstring& exe_path) {
+  std::string name;
+  DWORD dummy = 0;
+  const DWORD size = GetFileVersionInfoSizeW(exe_path.c_str(), &dummy);
+  if (size > 0) {
+    std::vector<BYTE> data(size);
+    struct Lang {
+      WORD lang, codepage;
+    }* langs = nullptr;
+    UINT len = 0;
+    if (GetFileVersionInfoW(exe_path.c_str(), 0, size, data.data()) &&
+        VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&langs), &len) &&
+        len >= sizeof(Lang)) {
+      wchar_t sub[64];
+      swprintf_s(sub, L"\\StringFileInfo\\%04x%04x\\FileDescription", langs[0].lang, langs[0].codepage);
+      wchar_t* desc = nullptr;
+      UINT dlen = 0;
+      if (VerQueryValueW(data.data(), sub, reinterpret_cast<void**>(&desc), &dlen) && dlen > 1) {
+        name = ToUtf8(std::wstring(desc, wcsnlen(desc, dlen)));
+      }
+    }
+  }
+  while (!name.empty() && name.back() == ' ') name.pop_back();
+  if (name.empty()) name = ToUtf8(std::filesystem::path(exe_path).stem().wstring());
+  return name;
+}
+
+std::wstring ProcessPath(DWORD pid) {
+  std::wstring out;
+  if (HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+    wchar_t path[MAX_PATH * 2];
+    DWORD size = MAX_PATH * 2;
+    if (QueryFullProcessImageNameW(proc, 0, path, &size)) out.assign(path, size);
+    CloseHandle(proc);
+  }
+  return out;
 }
 
 std::wstring UserFirstName() {

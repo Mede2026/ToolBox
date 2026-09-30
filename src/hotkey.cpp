@@ -2,8 +2,8 @@
 
 using nlohmann::json;
 
-GlobalHotkey::GlobalHotkey(HWND hwnd, int id, UINT mods, UINT vk, std::string label)
-    : hwnd_(hwnd), id_(id), mods_(mods), vk_(vk), label_(std::move(label)) {}
+GlobalHotkey::GlobalHotkey(HWND hwnd, int id, UINT mods, UINT vk, std::string label, std::string prefix)
+    : hwnd_(hwnd), id_(id), mods_(mods), vk_(vk), label_(std::move(label)), prefix_(std::move(prefix)) {}
 
 void GlobalHotkey::Register() {
   Unregister();
@@ -19,26 +19,28 @@ void GlobalHotkey::Unregister() {
 }
 
 void GlobalHotkey::Load(const json& cfg) {
-  enabled_ = cfg.value("hotkeyEnabled", enabled_);
-  mods_ = cfg.value("hotkeyMods", mods_);
-  vk_ = cfg.value("hotkeyVk", vk_);
-  label_ = cfg.value("hotkeyLabel", label_);
+  enabled_ = cfg.value(Key("hotkeyEnabled"), enabled_);
+  mods_ = cfg.value(Key("hotkeyMods"), mods_);
+  vk_ = cfg.value(Key("hotkeyVk"), vk_);
+  label_ = cfg.value(Key("hotkeyLabel"), label_);
 }
 
 void GlobalHotkey::Save(json& cfg) const {
-  cfg["hotkeyEnabled"] = enabled_;
-  cfg["hotkeyMods"] = mods_;
-  cfg["hotkeyVk"] = vk_;
-  cfg["hotkeyLabel"] = label_;
+  cfg[Key("hotkeyEnabled")] = enabled_;
+  cfg[Key("hotkeyMods")] = mods_;
+  cfg[Key("hotkeyVk")] = vk_;
+  cfg[Key("hotkeyLabel")] = label_;
 }
 
 void GlobalHotkey::AddState(json& state) const {
-  state["hotkeyEnabled"] = enabled_;
-  state["hotkeyLabel"] = label_;
-  state["hotkeyError"] = error_;
+  state[Key("hotkeyEnabled")] = enabled_;
+  state[Key("hotkeyLabel")] = label_;
+  state[Key("hotkeyError")] = error_;
 }
 
 bool GlobalHotkey::HandleAction(const std::string& action, const json& payload, bool active) {
+  if (action.rfind("hotkeyCapture", 0) != 0 && action != "setHotkey" && action != "setHotkeyEnabled") return false;
+  if (payload.value("hotkey", std::string()) != prefix_) return false;  // l'autre raccourci du module
   if (action == "hotkeyCaptureStart") {
     Unregister();  // sinon la combinaison n'arrive pas jusqu'à l'interface
   } else if (action == "hotkeyCaptureCancel") {

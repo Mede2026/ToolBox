@@ -6,11 +6,11 @@
 #include <string>
 
 // Raccourci clavier global (RegisterHotKey) configurable depuis l'interface.
-// Réglages : hotkeyEnabled, hotkeyMods, hotkeyVk, hotkeyLabel.
-// Actions : hotkeyCaptureStart, hotkeyCaptureCancel, setHotkey, setHotkeyEnabled.
+// Réglages : hotkeyEnabled, hotkeyMods, hotkeyVk, hotkeyLabel (préfixés « <prefix>_ » si un module en a plusieurs).
+// Actions : hotkeyCaptureStart, hotkeyCaptureCancel, setHotkey, setHotkeyEnabled (payload.hotkey = prefix).
 class GlobalHotkey {
  public:
-  GlobalHotkey(HWND hwnd, int id, UINT mods, UINT vk, std::string label);
+  GlobalHotkey(HWND hwnd, int id, UINT mods, UINT vk, std::string label, std::string prefix = {});
   ~GlobalHotkey() { Unregister(); }
 
   void Register();
@@ -34,4 +34,7 @@ class GlobalHotkey {
   std::string label_;
   bool registered_ = false;
   std::string error_;
+  std::string prefix_;
+
+  std::string Key(const char* name) const { return prefix_.empty() ? name : prefix_ + "_" + name; }
 };

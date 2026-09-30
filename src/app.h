@@ -24,7 +24,7 @@ enum : UINT {
   WM_APP_UPDATE,                  // l'updater a changé d'état
   WM_APP_SHOW,                    // une 2e instance demande d'afficher la fenêtre
   WM_APP_CLIP_POPUP,              // raccourci du presse-papiers pressé
-  WM_APP_OCR_START,               // raccourci « Texte à l'écran » (wparam = 1 : depuis l'interface)
+  WM_APP_OCR_START,               // capture : wparam bit 0 = depuis l'interface, bit 1 = image (sinon texte)
 };
 
 class App {
@@ -69,9 +69,10 @@ class App {
   void PasteIntoPreviousWindow();
 
   // Texte à l'écran (OCR)
-  void StartOcr(bool from_ui);
+  void StartOcr(bool from_ui, bool screenshot);
   void BeginOcrNow();
   bool ocr_restore_main_ = false;
+  bool ocr_screenshot_ = false;
 
   // Notification près de l'horloge (bulle de l'icône ToolBox).
   void Notify(const std::string& title, const std::string& text);

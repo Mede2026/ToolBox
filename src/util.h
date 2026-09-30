@@ -21,6 +21,12 @@ std::wstring ForegroundProcessName();
 
 std::wstring ToLower(std::wstring s);
 
+// Nom lisible d'un programme (description du fichier .exe, ex. « Google Chrome »), sinon le nom du fichier.
+std::string FileDescription(const std::wstring& exe_path);
+
+// Chemin complet de l'exécutable d'un processus (vide si inaccessible).
+std::wstring ProcessPath(DWORD pid);
+
 // Prénom de l'utilisateur Windows (ex. « Médéric »), pour l'accueil.
 std::wstring UserFirstName();
 

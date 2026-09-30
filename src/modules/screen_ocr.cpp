@@ -1,6 +1,10 @@
 #include "modules/screen_ocr.h"
 
+#include <shellapi.h>
+#include <shlobj.h>
 #include <tesseract/baseapi.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <chrono>
@@ -149,18 +153,91 @@ struct OcrResult {
   std::string text;
   std::string error;
   int ms;
+  bool shot = false;  // capture d'écran (pas de lecture de texte)
+  std::string path;
+  int w = 0, h = 0;
 };
+
+constexpr size_t kMaxShots = 30;
+
+// Images\Captures ToolBox (créé au besoin).
+fs::path ShotsDir() {
+  PWSTR raw = nullptr;
+  fs::path dir;
+  if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Pictures, 0, nullptr, &raw))) dir = fs::path(raw) / L"Captures ToolBox";
+  else dir = util::DataDir() / L"Captures";
+  CoTaskMemFree(raw);
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  return dir;
+}
+
+// Copie une image (BGRA, lignes de haut en bas) dans le presse-papiers (format CF_DIB).
+bool SetClipboardImage(HWND hwnd, const std::vector<uint8_t>& bgra, int w, int h) {
+  const size_t stride = size_t(w) * 4, bytes = stride * h;
+  HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + bytes);
+  if (!mem) return false;
+  auto* p = static_cast<uint8_t*>(GlobalLock(mem));
+  BITMAPINFOHEADER bih{};
+  bih.biSize = sizeof(bih);
+  bih.biWidth = w;
+  bih.biHeight = h;  // DIB classique : lignes de bas en haut
+  bih.biPlanes = 1;
+  bih.biBitCount = 32;
+  bih.biCompression = BI_RGB;
+  bih.biSizeImage = static_cast<DWORD>(bytes);
+  memcpy(p, &bih, sizeof(bih));
+  for (int y = 0; y < h; ++y) memcpy(p + sizeof(bih) + size_t(h - 1 - y) * stride, &bgra[size_t(y) * stride], stride);
+  GlobalUnlock(mem);
+  for (int i = 0; i < 10 && !OpenClipboard(hwnd); ++i) Sleep(20);
+  EmptyClipboard();
+  const bool ok = SetClipboardData(CF_DIB, mem) != nullptr;
+  if (!ok) GlobalFree(mem);
+  CloseClipboard();
+  return ok;
+}
+
+// Enregistre en PNG avec WIC (Windows Imaging Component). Appelé sur un fil de travail.
+bool SavePng(const fs::path& path, const std::vector<uint8_t>& bgra, int w, int h) {
+  using Microsoft::WRL::ComPtr;
+  ComPtr<IWICImagingFactory> factory;
+  ComPtr<IWICStream> stream;
+  ComPtr<IWICBitmapEncoder> encoder;
+  ComPtr<IWICBitmapFrameEncode> frame;
+  if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+      FAILED(factory->CreateStream(&stream)) || FAILED(stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE)) ||
+      FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) ||
+      FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) ||
+      FAILED(encoder->CreateNewFrame(&frame, nullptr)) || FAILED(frame->Initialize(nullptr)) ||
+      FAILED(frame->SetSize(w, h))) {
+    return false;
+  }
+  WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+  if (FAILED(frame->SetPixelFormat(&format)) || format != GUID_WICPixelFormat32bppBGRA) return false;
+  return SUCCEEDED(frame->WritePixels(h, w * 4, static_cast<UINT>(bgra.size()), const_cast<BYTE*>(bgra.data()))) &&
+         SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
+}
+
+std::string ShotFileName() {
+  SYSTEMTIME t;
+  GetLocalTime(&t);
+  char name[64];
+  snprintf(name, sizeof(name), "Capture %04d-%02d-%02d %02dh%02d %02d.png", t.wYear, t.wMonth, t.wDay, t.wHour,
+           t.wMinute, t.wSecond);
+  return name;
+}
 
 }  // namespace
 
-ScreenOcr::ScreenOcr(HWND hwnd, HINSTANCE instance, std::function<void()> on_change, std::function<void()> on_hotkey,
-                     Notify notify)
+ScreenOcr::ScreenOcr(HWND hwnd, HINSTANCE instance, std::function<void()> on_change,
+                     std::function<void(bool)> on_hotkey, Notify notify)
     : hwnd_(hwnd),
       instance_(instance),
       on_change_(std::move(on_change)),
       on_hotkey_(std::move(on_hotkey)),
       notify_(std::move(notify)),
-      hotkey_(hwnd, 0x4202, MOD_CONTROL | MOD_ALT, 'T', "Ctrl + Alt + T") {}
+      hotkey_(hwnd, 0x4202, MOD_CONTROL | MOD_ALT, 'T', "Ctrl + Alt + T"),
+      shot_hotkey_(hwnd, 0x4203, MOD_CONTROL | MOD_ALT, 'S', "Ctrl + Alt + S", "shot") {}
 
 ScreenOcr::~ScreenOcr() { Stop(); }
 
@@ -168,10 +245,12 @@ void ScreenOcr::Start() {
   if (running_) return;
   running_ = true;
   hotkey_.Register();
+  shot_hotkey_.Register();
 }
 
 void ScreenOcr::Stop() {
   hotkey_.Unregister();
+  shot_hotkey_.Unregister();
   running_ = false;
   if (!busy_) {
     std::lock_guard lock(engine_mu_);
@@ -181,6 +260,14 @@ void ScreenOcr::Stop() {
 
 void ScreenOcr::LoadConfig(const json& cfg) {
   hotkey_.Load(cfg);
+  shot_hotkey_.Load(cfg);
+  shot_save_ = cfg.value("shotSave", true);
+  shots_.clear();
+  for (const auto& e : cfg.value("shots", json::array())) {
+    if (e.is_object()) {
+      shots_.push_back({next_id_++, e.value("path", ""), e.value("time", 0LL), e.value("w", 0), e.value("h", 0)});
+    }
+  }
   single_line_ = cfg.value("singleLine", false);
   notify_enabled_ = cfg.value("notify", true);
   if (auto it = cfg.find("langs"); it != cfg.end() && it->is_array()) {
@@ -199,8 +286,12 @@ void ScreenOcr::LoadConfig(const json& cfg) {
 json ScreenOcr::SaveConfig() const {
   json history = json::array();
   for (const auto& e : history_) history.push_back({{"text", e.text}, {"time", e.time}, {"ms", e.ms}});
-  json cfg{{"singleLine", single_line_}, {"notify", notify_enabled_}, {"langs", langs_}, {"history", history}};
+  json shots = json::array();
+  for (const auto& e : shots_) shots.push_back({{"path", e.path}, {"time", e.time}, {"w", e.w}, {"h", e.h}});
+  json cfg{{"singleLine", single_line_}, {"notify", notify_enabled_}, {"langs", langs_}, {"history", history},
+           {"shotSave", shot_save_}, {"shots", shots}};
   hotkey_.Save(cfg);
+  shot_hotkey_.Save(cfg);
   return cfg;
 }
 
@@ -223,7 +314,17 @@ json ScreenOcr::State() const {
     s["detail"] = detail_;
   }
   s["engineLoaded"] = last_use_ != 0;
+  json shots = json::array();
+  for (const auto& e : shots_) {
+    std::error_code ec;
+    shots.push_back({{"id", e.id}, {"path", e.path}, {"time", e.time}, {"w", e.w}, {"h", e.h},
+                     {"exists", !e.path.empty() && fs::exists(util::FromUtf8(e.path), ec)}});
+  }
+  s["shots"] = shots;
+  s["shotSave"] = shot_save_;
+  s["shotFolder"] = util::ToUtf8(ShotsDir().wstring());
   hotkey_.AddState(s);
+  shot_hotkey_.AddState(s);
   return s;
 }
 
@@ -244,6 +345,40 @@ std::string ScreenOcr::LangString(const std::vector<std::string>& langs) {
 
 void ScreenOcr::HandleAction(const std::string& action, const json& payload) {
   if (hotkey_.HandleAction(action, payload, running_)) return;
+  if (shot_hotkey_.HandleAction(action, payload, running_)) return;
+
+  const auto find_shot = [&]() -> const Shot* {
+    const auto id = payload.value("id", 0ULL);
+    for (const auto& e : shots_) {
+      if (e.id == id) return &e;
+    }
+    return nullptr;
+  };
+  if (action == "setShotSave") {
+    shot_save_ = payload.value("value", true);
+    return;
+  } else if (action == "openShotFolder") {
+    ShellExecuteW(nullptr, L"open", ShotsDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return;
+  } else if (action == "openShot") {
+    if (const Shot* e = find_shot(); e && !e->path.empty()) {
+      ShellExecuteW(nullptr, L"open", util::FromUtf8(e->path).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+    return;
+  } else if (action == "showShot") {  // ouvre l'Explorateur avec le fichier sélectionné
+    if (const Shot* e = find_shot(); e && !e->path.empty()) {
+      const std::wstring args = L"/select,\"" + util::FromUtf8(e->path) + L"\"";
+      ShellExecuteW(nullptr, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+    }
+    return;
+  } else if (action == "deleteShot") {  // retire de la liste (le fichier reste)
+    const auto id = payload.value("id", 0ULL);
+    std::erase_if(shots_, [&](const Shot& e) { return e.id == id; });
+    return;
+  } else if (action == "clearShots") {
+    shots_.clear();
+    return;
+  }
 
   if (action == "setLangs") {
     std::vector<std::string> langs;
@@ -281,11 +416,24 @@ void ScreenOcr::HandleAction(const std::string& action, const json& payload) {
 void ScreenOcr::OnWindowMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
   if (msg == WM_TOOLBOX_OCR_DONE) {
     std::unique_ptr<OcrResult> r(reinterpret_cast<OcrResult*>(lparam));
+    if (r->shot) {
+      shots_.push_front({next_id_++, r->path, NowSeconds(), r->w, r->h});
+      while (shots_.size() > kMaxShots) shots_.pop_back();
+      Emit("screenshot");
+      if (notify_ && notify_enabled_) {
+        notify_(r->ok ? "Capture copiée" : "Capture copiée (non enregistrée)",
+                r->ok ? (r->path.empty() ? "Colle-la avec Ctrl + V." : "Enregistrée dans Images\\Captures ToolBox.")
+                      : r->error);
+      }
+      if (on_change_) on_change_();
+      return;
+    }
     if (!r->ok) {
       SetStatus("error", r->error);
       if (notify_ && notify_enabled_) notify_("Texte à l'écran", r->error);
       return;
     }
+    Emit("ocr");
     SetClipboardText(hwnd_, util::FromUtf8(r->text));
     history_.push_front({next_id_++, r->text, NowSeconds(), r->ms});
     while (history_.size() > kMaxHistory) history_.pop_back();
@@ -297,7 +445,8 @@ void ScreenOcr::OnWindowMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
     }
     return;
   }
-  if (running_ && hotkey_.Matches(msg, wparam) && on_hotkey_) on_hotkey_();
+  if (running_ && hotkey_.Matches(msg, wparam) && on_hotkey_) on_hotkey_(false);
+  if (running_ && shot_hotkey_.Matches(msg, wparam) && on_hotkey_) on_hotkey_(true);
 }
 
 void ScreenOcr::Tick() {
@@ -319,17 +468,39 @@ void ScreenOcr::ReleaseEngine() {
   last_use_ = 0;
 }
 
-void ScreenOcr::BeginCapture(std::function<void()> after_select) {
-  if (!running_ || busy_) {
+void ScreenOcr::BeginCapture(bool screenshot, std::function<void()> after_select) {
+  if (!running_ || (!screenshot && busy_)) {
     if (after_select) after_select();
     return;
   }
-  const bool started = ScreenSelector::Start(instance_, [this, after_select](bool ok, std::vector<uint8_t> px, int w,
-                                                                               int h) {
-    if (after_select) after_select();
-    if (ok) RecognizeAsync(std::move(px), w, h);
-  });
+  const std::wstring hint = screenshot ? L"Sélectionne la zone à capturer" : L"Sélectionne le texte à lire";
+  const bool started = ScreenSelector::Start(
+      instance_, hint, [this, after_select, screenshot](bool ok, std::vector<uint8_t> px, int w, int h) {
+        if (after_select) after_select();
+        if (!ok) return;
+        if (screenshot) SaveScreenshot(std::move(px), w, h);
+        else RecognizeAsync(std::move(px), w, h);
+      });
   if (!started && after_select) after_select();
+}
+
+void ScreenOcr::SaveScreenshot(std::vector<uint8_t> bgra, int w, int h) {
+  for (size_t i = 3; i < bgra.size(); i += 4) bgra[i] = 255;  // la capture GDI n'a pas de transparence
+  SetClipboardImage(hwnd_, bgra, w, h);
+  if (!shot_save_) {
+    PostMessageW(hwnd_, WM_TOOLBOX_OCR_DONE, 0,
+                 reinterpret_cast<LPARAM>(new OcrResult{true, {}, {}, 0, true, {}, w, h}));
+    return;
+  }
+  std::thread([this, bgra = std::move(bgra), w, h] {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    const fs::path file = ShotsDir() / util::FromUtf8(ShotFileName());
+    const bool ok = SavePng(file, bgra, w, h);
+    CoUninitialize();
+    auto* r = new OcrResult{ok, {}, ok ? std::string() : "Impossible d'enregistrer le fichier PNG.", 0, true,
+                            ok ? util::ToUtf8(file.wstring()) : std::string(), w, h};
+    PostMessageW(hwnd_, WM_TOOLBOX_OCR_DONE, 0, reinterpret_cast<LPARAM>(r));
+  }).detach();
 }
 
 void ScreenOcr::RecognizeAsync(std::vector<uint8_t> bgra, int w, int h) {

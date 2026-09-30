@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 // Fige l'écran et laisse l'utilisateur sélectionner une zone à la souris.
@@ -14,10 +15,10 @@ class ScreenSelector {
   using Done = std::function<void(bool ok, std::vector<uint8_t> bgra, int width, int height)>;
 
   // Une seule sélection à la fois : retourne false si une sélection est déjà ouverte.
-  static bool Start(HINSTANCE instance, Done done);
+  static bool Start(HINSTANCE instance, std::wstring hint, Done done);
 
  private:
-  ScreenSelector(HINSTANCE instance, Done done);
+  ScreenSelector(HINSTANCE instance, std::wstring hint, Done done);
   ~ScreenSelector();
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -29,6 +30,7 @@ class ScreenSelector {
   static ScreenSelector* active_;
 
   Done done_;
+  std::wstring hint_;  // consigne affichée en haut
   HWND hwnd_ = nullptr;
   int vx_ = 0, vy_ = 0, vw_ = 0, vh_ = 0;  // écran virtuel (tous les moniteurs)
   HDC shot_dc_ = nullptr;                 // capture d'écran

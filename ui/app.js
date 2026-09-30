@@ -89,6 +89,8 @@ const ICONS = {
   star: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z',
   stop: 'M7 7h10v10H7z',
   leaf: 'M5 19c0-8 5-13 14-14 0 9-5 14-13 14zM5 19l7-7',
+  camera: 'M4 8.5a1.5 1.5 0 0 1 1.5-1.5h2.2l1.3-2h6l1.3 2h2.2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5zM12 16a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z',
+  chart: 'M4 4v16h16M8 16v-4M12 16V8M16 16v-6',
   scan: 'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 9.5h8M8 12.5h8M8 15.5h5',
   tray: 'M4 14h4l1.5 2.5h5L16 14h4M4 14l2.5-8h11l2.5 8v5H4z',
 };
@@ -164,10 +166,11 @@ const PAGES = [
   { id: 'monitor', label: 'Moniteur', icon: 'monitor', module: 'monitor', keys: 'cpu processeur ram memoire disque batterie reseau internet vitesse', page: () => MonitorPage },
   { id: 'converter', label: 'Convertisseur', icon: 'convert', module: 'converter', keys: 'unites devises argent dollar euro temperature longueur masse', page: () => ConverterPage },
   { sep: true },
+  { id: 'stats', label: 'Statistiques', icon: 'chart', module: 'stats', keys: 'statistiques stats temps ecran utilisation historique chiffres', page: () => StatsPage },
   { id: 'processes', label: 'Programmes', icon: 'cpu', module: 'processes', keys: 'taches tuer fermer arreter relancer ressources lent mode leger', page: () => ProcessesPage },
   { id: 'enter_guard', label: 'Garde Enter', icon: 'keyboard', module: 'enter_guard', keys: 'a clavier touche accident entree faute', page: () => EnterGuardPage },
   { id: 'clipboard', label: 'Presse-papiers', icon: 'clipboard', module: 'clipboard', keys: 'copier coller ctrl c v historique texte', page: () => ClipboardPage },
-  { id: 'ocr', label: "Texte à l'écran", icon: 'scan', module: 'ocr', keys: 'ocr tesseract texte image capture ecran lire copier scanner photo', page: () => OcrPage },
+  { id: 'ocr', label: "Capture d'écran", icon: 'camera', module: 'ocr', keys: 'capture screenshot image png ocr tesseract texte ecran lire copier scanner photo', page: () => OcrPage },
   { id: 'app_launcher', label: "Raccourcis d'apps", icon: 'apps', module: 'app_launcher', keys: 'lancer groupe raccourci ouvrir apps', page: () => AppLauncherPage },
   { id: 'place_launcher', label: 'Lancement par lieu', icon: 'place', module: 'place_launcher', keys: 'gps wifi maison ecole lieu adresse position', page: () => PlacePage },
   { sep: true },
@@ -335,8 +338,8 @@ function setGauge(id, pct, { text, unit = '%', hotAt = 80, critAt = 92 } = {}) {
 }
 
 // Petit graphique en ligne (historique)
-function chartSVG(series, { max = 100, height = 180 } = {}) {
-  const W = 900, H = height, padL = 44, padB = 6, n = 90;
+function chartSVG(series, { max = 100, height = 180, points = 90 } = {}) {
+  const W = 900, H = height, padL = 44, padB = 6, n = points;
   const x = i => padL + (W - padL) * i / (n - 1);
   const y = v => (H - padB) - (H - padB - 6) * Math.min(v, max) / max;
   let grid = '';
@@ -426,7 +429,7 @@ const HomePage = {
       ${this.card('app_launcher', 'apps', "Raccourcis d'apps", this.appsBody())}
       ${this.card('processes', 'cpu', 'Programmes', this.procBody())}
       ${this.card('place_launcher', 'place', 'Lieux', this.placeBody())}
-      ${this.card('ocr', 'scan', "Texte à l'écran", this.ocrBody())}
+      ${this.card('ocr', 'camera', "Capture d'écran", this.ocrBody())}
     </div>
 
     <h2 class="home-section">Toutes les fonctions</h2>
@@ -480,8 +483,10 @@ const HomePage = {
   ocrBody() {
     const s = modState('ocr');
     const last = (s.history || [])[0];
-    return `<div class="faint small">${s.hotkeyEnabled && s.hotkeyLabel ? `Raccourci : <kbd class="small">${esc(s.hotkeyLabel)}</kbd>` : 'Sélectionne une zone, le texte est copié.'}</div>
-      <div><button class="btn primary" data-ocr-go>${icon('scan')} Capturer une zone</button></div>
+    return `<div class="row wrap" style="gap:6px">
+        <button class="btn primary" data-home-capture="shot" title="${esc(s.shot_hotkeyLabel || '')}">${icon('camera')} Image</button>
+        <button class="btn" data-home-capture="text" title="${esc(s.hotkeyLabel || '')}">${icon('scan')} Texte</button></div>
+      <div class="faint small">${s.shot_hotkeyEnabled ? `Image <kbd class="small">${esc(s.shot_hotkeyLabel)}</kbd>` : ''} ${s.hotkeyEnabled ? `Texte <kbd class="small">${esc(s.hotkeyLabel)}</kbd>` : ''}</div>
       ${last ? `<div class="quick-item" data-ocr-copy="${last.id}" title="Cliquer pour copier">${esc(last.text.slice(0, 120))}</div>` : ''}`;
   },
   guardBody() {
@@ -497,7 +502,8 @@ const HomePage = {
       if (clip) { moduleAction('clipboard', 'copy', { id: +clip.dataset.clipId }); toast('Copié !'); }
       const g = e.target.closest('[data-launch-group]');
       if (g) { moduleAction('app_launcher', 'launchGroup', { id: g.dataset.launchGroup }); toast('Lancement…'); }
-      if (e.target.closest('[data-ocr-go]')) send({ type: 'ocrCapture' });
+      const cap = e.target.closest('[data-home-capture]');
+      if (cap) send({ type: 'ocrCapture', shot: cap.dataset.homeCapture === 'shot' });
       const oc = e.target.closest('[data-ocr-copy]');
       if (oc) { moduleAction('ocr', 'copy', { id: +oc.dataset.ocrCopy }); toast('Copié !'); }
       const pm = e.target.closest('[data-home-pm]');
@@ -608,6 +614,10 @@ const ProcessesPage = {
       const b = e.target.closest('[data-pm]');
       if (!b) return;
       const act = b.dataset.pm, key = b.dataset.key;
+      if (act === 'toggleUseless' && procData) {
+        const p = procData.programs.find(x => x.key === key);
+        if (p) { p.useless = !p.useless; this.renderList(); this.renderTop(); }
+      }
       if (act === 'stopUseless') { moduleAction('processes', 'stopUseless'); toast('Mode léger activé'); }
       else if (act === 'relaunchAll') moduleAction('processes', 'relaunchAll');
       else moduleAction('processes', act, { key });
@@ -649,16 +659,16 @@ const ProcessesPage = {
     progs.sort(procSort === 'name' ? (a, b) => a.name.localeCompare(b.name, 'fr') : procSort === 'cpu' ? (a, b) => b.cpu - a.cpu : (a, b) => b.ram - a.ram);
     if (!progs.length) { el.innerHTML = `<div class="card empty">${q ? 'Aucun résultat' : 'Aucun programme à afficher'}</div>`; return; }
     el.innerHTML = progs.map(p => `
-      <div class="list-item">
+      <div class="list-item pm-row">
         <button class="btn ghost icon-only" data-pm="toggleUseless" data-key="${esc(p.key)}" title="${p.useless ? 'Retirer des inutiles' : 'Marquer comme inutile'}" style="color:${p.useless ? 'var(--warn)' : 'var(--text-3)'}">
           <svg class="icon" viewBox="0 0 24 24" style="${p.useless ? 'fill:currentColor' : ''}"><path d="${ICONS.star}"/></svg></button>
         <div class="main">
-          <div class="row" style="gap:8px"><b class="ellipsis">${esc(p.name)}</b>${p.count > 1 ? `<span class="chip">${p.count} processus</span>` : ''}${p.windowed ? '' : '<span class="chip">arrière-plan</span>'}</div>
+          <div class="row" style="gap:8px;min-width:0"><b class="ellipsis" title="${esc(p.name)}">${esc(p.name)}</b><span class="pm-chips">${p.count > 1 ? `<span class="chip">${p.count} processus</span>` : ''}${p.windowed ? '' : '<span class="chip">arrière-plan</span>'}</span></div>
           <div class="faint small ellipsis" title="${esc(p.path)}">${esc(p.title || p.exe)}</div>
         </div>
-        <div style="width:90px;text-align:right"><div class="faint small">Mémoire</div><b>${fmtBytes(p.ram)}</b></div>
-        <div style="width:70px;text-align:right"><div class="faint small">CPU</div><b>${nf1.format(p.cpu)} %</b></div>
-        <div class="actions" style="opacity:1">
+        <div style="width:76px;text-align:right;flex:none"><div class="faint small">Mémoire</div><b>${fmtBytes(p.ram)}</b></div>
+        <div class="pm-cpu" style="width:58px;text-align:right;flex:none"><div class="faint small">CPU</div><b>${nf1.format(p.cpu)} %</b></div>
+        <div class="actions" style="opacity:1;flex:none">
           <button class="btn" data-pm="stop" data-key="${esc(p.key)}" title="Ferme proprement, comme le ✕ de sa fenêtre (il peut demander d'enregistrer)">${icon('stop')} Arrêter</button>
           <button class="btn ghost danger" data-pm="forceStop" data-key="${esc(p.key)}" title="Arrêt immédiat : le travail non enregistré est perdu. Utile si le programme ne répond plus.">Forcer</button>
         </div>
@@ -678,6 +688,102 @@ const ProcessesPage = {
         </div>`).join('')}</div>` : '';
   },
 };
+
+// ------------------------------------------------------------------ Statistiques
+
+const EVENT_LABELS = {
+  copy: ['Textes copiés', 'clipboard'], ocr: ['Textes lus (OCR)', 'scan'], screenshot: ["Captures d'écran", 'camera'],
+  enterFix: ['Fautes Enter corrigées', 'keyboard'], appGroup: ["Groupes d'apps lancés", 'apps'],
+  placeLaunch: ['Lancements par lieu', 'place'], programStop: ['Programmes arrêtés', 'stop'], programRelaunch: ['Programmes relancés', 'update'],
+};
+let statsRange = 'today';
+
+function fmtHM(sec) {
+  sec = Math.round(sec || 0);
+  const h = Math.floor(sec / 3600), m = Math.round(sec % 3600 / 60);
+  return h ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`;
+}
+const hourLabel = h => new Date(h * 3600 * 1000).toLocaleString('fr-CA', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+
+const StatsPage = {
+  render() {
+    return `
+    <div class="grid stat-tiles" id="st-tiles"></div>
+    <div class="grid grid-2" style="margin-top:12px">
+      <div class="card">
+        <h2>Temps d'écran — 7 derniers jours</h2>
+        <div id="st-days"></div>
+      </div>
+      <div class="card">
+        <div class="row wrap" style="margin-bottom:10px"><h2 style="margin:0">Apps les plus utilisées</h2><span class="spacer"></span>
+          <div class="tabs" style="margin:0"><button class="tab" data-range="today">Aujourd'hui</button><button class="tab" data-range="week">7 jours</button></div></div>
+        <div id="st-apps"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="row wrap"><h2 style="margin:0">Processeur et mémoire — 48 dernières heures</h2><span class="spacer"></span>
+        <div class="legend"><span><i style="background:var(--accent)"></i>Processeur</span><span><i style="background:#f2a93b"></i>Mémoire</span></div></div>
+      <div id="st-hours" style="margin-top:10px"></div>
+    </div>
+    <div class="row" style="margin:18px 0 8px"><div class="section-title" style="margin:0" id="st-since">Depuis le début</div><span class="spacer"></span>
+      <button class="btn ghost" id="st-reset">${icon('trash')} Remettre à zéro</button></div>
+    <div class="grid stat-tiles" id="st-totals"></div>
+    <p class="faint small" style="margin-top:14px">🔒 Ces statistiques restent sur ton PC. Le temps d'écran ne compte que quand tu utilises le clavier ou la souris.</p>`;
+  },
+  bind(root) {
+    $$('[data-range]', root).forEach(b => b.addEventListener('click', () => { statsRange = b.dataset.range; this.update(); }));
+    $('#st-reset', root).addEventListener('click', () => { if (confirm('Effacer toutes les statistiques ?')) moduleAction('stats', 'reset'); });
+    this.update();
+  },
+  update() {
+    const s = modState('stats');
+    const tiles = document.getElementById('st-tiles');
+    if (!tiles) return;
+    const days = s.days || [];
+    const todayKey = dateKey(new Date());
+    const today = days.find(d => d.date === todayKey) || { active: 0, apps: [], events: {} };
+    const ev = today.events || {};
+    const tile = (label, value, ic) => `<div class="card tight stat-tile">${icon(ic)}<div style="min-width:0"><div class="label ellipsis">${label}</div><div class="value">${value}</div></div></div>`;
+    tiles.innerHTML = [
+      tile("Temps d'écran aujourd'hui", fmtHM(today.active), 'monitor'),
+      tile('Textes copiés', nf0.format(ev.copy || 0), 'clipboard'),
+      tile('Captures et textes lus', nf0.format((ev.screenshot || 0) + (ev.ocr || 0)), 'camera'),
+      tile('Fautes Enter corrigées', nf0.format(ev.enterFix || 0), 'keyboard'),
+    ].join('');
+
+    // Barres des 7 derniers jours (les jours sans données comptent pour 0)
+    const byDate = Object.fromEntries(days.map(d => [d.date, d]));
+    const list = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      list.push({ label: i === 0 ? 'Auj.' : d.toLocaleDateString('fr-CA', { weekday: 'short' }).replace('.', ''), sec: byDate[dateKey(d)]?.active || 0 });
+    }
+    const max = Math.max(3600, ...list.map(x => x.sec));
+    document.getElementById('st-days').innerHTML = `<div class="bars">${list.map(x => `
+      <div class="bar-col" title="${esc(fmtHM(x.sec))}"><div class="bar-val">${x.sec ? fmtHM(x.sec) : ''}</div>
+        <div class="bar"><div style="height:${(100 * x.sec / max).toFixed(1)}%"></div></div><div class="bar-label">${esc(x.label)}</div></div>`).join('')}</div>`;
+
+    $$('[data-range]').forEach(b => b.classList.toggle('active', b.dataset.range === statsRange));
+    const apps = statsRange === 'today' ? today.apps || [] : s.week || [];
+    const amax = Math.max(1, ...apps.map(a => a.sec));
+    document.getElementById('st-apps').innerHTML = apps.length ? `<div class="app-bars">${apps.slice(0, 8).map(a => `
+      <div class="app-bar"><div class="row"><span class="ellipsis" style="flex:1">${esc(a.name)}</span><b>${fmtHM(a.sec)}</b></div>
+        <div class="app-bar-track"><div style="width:${(100 * a.sec / amax).toFixed(1)}%"></div></div></div>`).join('')}</div>`
+      : '<div class="empty">Pas encore de données. Reviens dans quelques minutes !</div>';
+
+    const hours = s.hours || [];
+    document.getElementById('st-hours').innerHTML = hours.length > 1
+      ? chartSVG([{ data: hours.map(h => h.cpu) }, { data: hours.map(h => h.ram), cls: 'alt' }], { points: 48, height: 150 })
+        + `<div class="row faint small" style="justify-content:space-between;margin-top:4px"><span>${esc(hourLabel(hours[0].hour))}</span><span>maintenant</span></div>`
+      : '<div class="empty">Le graphique se remplit heure par heure.</div>';
+
+    const totals = s.totals || {};
+    document.getElementById('st-since').textContent = s.since
+      ? `Depuis le ${new Date(s.since * 1000).toLocaleDateString('fr-CA', { day: 'numeric', month: 'long' })}` : 'Depuis le début';
+    document.getElementById('st-totals').innerHTML = Object.entries(EVENT_LABELS).map(([k, [label, ic]]) => tile(label, nf0.format(totals[k] || 0), ic)).join('');
+  },
+};
+const dateKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 // ------------------------------------------------------------------ Garde Enter
 
@@ -840,37 +946,61 @@ const ClipboardPage = {
 const OcrPage = {
   render() {
     return `
-    <div class="card">
-      <div class="row wrap" style="gap:26px">
-        <div class="ocr-illus">${icon('scan')}</div>
-        <div style="flex:1;min-width:260px">
-          <h2 style="margin:0 0 6px">Lire le texte de l'écran</h2>
-          <div class="muted" id="ocr-intro"></div>
+    <div class="grid grid-2">
+      <div class="card capture-card">
+        <div class="row" style="gap:12px">
+          <div class="ocr-illus">${icon('camera')}</div>
+          <div style="flex:1;min-width:0"><h2 style="margin:0">Capture d'écran</h2>
+            <div class="muted small">L'image est copiée (colle-la avec Ctrl + V) et enregistrée en PNG.</div></div>
         </div>
-        <button class="btn primary big" id="ocr-go">${icon('scan')} Capturer une zone</button>
+        <button class="btn primary big" data-capture="shot">${icon('camera')} Capturer une zone</button>
+        <div id="shot-hotkey"></div>
+        <label class="row small"><input type="checkbox" class="switch" id="shot-save" ${modState('ocr').shotSave ? 'checked' : ''}> Enregistrer dans Images\\Captures ToolBox</label>
       </div>
-      <div id="ocr-status" style="margin-top:16px"></div>
+      <div class="card capture-card">
+        <div class="row" style="gap:12px">
+          <div class="ocr-illus">${icon('scan')}</div>
+          <div style="flex:1;min-width:0"><h2 style="margin:0">Lire le texte (OCR)</h2>
+            <div class="muted small">Tesseract lit le texte de la zone et le copie. Marche sur les images, vidéos, PDF scannés…</div></div>
+        </div>
+        <button class="btn primary big" data-capture="text">${icon('scan')} Lire une zone</button>
+        <div id="ocr-hotkey"></div>
+        <div id="ocr-status"></div>
+      </div>
     </div>
-    <div id="ocr-hotkey"></div>
-    <div class="section-title">Langues</div>
+
+    <div class="row" style="margin:18px 0 8px"><div class="section-title" style="margin:0">Dernières captures</div><span class="spacer"></span>
+      <button class="btn ghost" data-shot-act="folder">${icon('folder')} Ouvrir le dossier</button></div>
+    <div class="shot-grid" id="shot-list"></div>
+
+    <div class="row" style="margin:18px 0 8px"><div class="section-title" style="margin:0">Derniers textes lus</div><span class="spacer"></span>
+      <button class="btn ghost" id="ocr-clear">${icon('trash')} Tout effacer</button></div>
+    <div class="list" id="ocr-history"></div>
+
+    <div class="section-title">Langues du texte</div>
     <div class="card tight" id="ocr-langs"></div>
     <div class="section-title">Réglages</div>
     <div class="setting">${icon('convert')}
-      <div class="text"><div class="title">Tout mettre sur une seule ligne</div><div class="desc">Pratique pour coller dans une barre de recherche ou un formulaire.</div></div>
+      <div class="text"><div class="title">Texte sur une seule ligne</div><div class="desc">Pratique pour coller dans une barre de recherche ou un formulaire.</div></div>
       <input type="checkbox" class="switch" id="ocr-single" ${modState('ocr').singleLine ? 'checked' : ''}></div>
     <div class="setting">${icon('info')}
-      <div class="text"><div class="title">Afficher une notification</div><div class="desc">Un aperçu du texte copié apparaît près de l'horloge.</div></div>
-      <input type="checkbox" class="switch" id="ocr-notify" ${modState('ocr').notify ? 'checked' : ''}></div>
-    <div class="row" style="margin:26px 0 10px"><div class="section-title" style="margin:0">Derniers textes lus</div><span class="spacer"></span>
-      <button class="btn ghost" id="ocr-clear">${icon('trash')} Tout effacer</button></div>
-    <div class="list" id="ocr-history"></div>`;
+      <div class="text"><div class="title">Afficher une notification</div><div class="desc">Un aperçu apparaît près de l'horloge après chaque capture.</div></div>
+      <input type="checkbox" class="switch" id="ocr-notify" ${modState('ocr').notify ? 'checked' : ''}></div>`;
   },
   bind(root) {
-    $('#ocr-go', root).addEventListener('click', () => send({ type: 'ocrCapture' }));
-    bindHotkeyCard($('#ocr-hotkey', root), 'ocr', () => this.renderHotkey());
+    $$('[data-capture]', root).forEach(b => b.addEventListener('click', () => send({ type: 'ocrCapture', shot: b.dataset.capture === 'shot' })));
+    bindHotkeyCard($('#ocr-hotkey', root), 'ocr', () => this.renderHotkeys());
+    bindHotkeyCard($('#shot-hotkey', root), 'ocr', () => this.renderHotkeys(), 'shot');
+    $('#shot-save', root).addEventListener('change', e => moduleAction('ocr', 'setShotSave', { value: e.target.checked }));
     $('#ocr-single', root).addEventListener('change', e => moduleAction('ocr', 'setSingleLine', { value: e.target.checked }));
     $('#ocr-notify', root).addEventListener('change', e => moduleAction('ocr', 'setNotify', { value: e.target.checked }));
     $('#ocr-clear', root).addEventListener('click', () => moduleAction('ocr', 'clear'));
+    root.addEventListener('click', e => {
+      const b = e.target.closest('[data-shot-act]');
+      if (!b) return;
+      const act = { folder: 'openShotFolder', open: 'openShot', show: 'showShot', remove: 'deleteShot' }[b.dataset.shotAct];
+      moduleAction('ocr', act, { id: +b.dataset.id || 0 });
+    });
     $('#ocr-langs', root).addEventListener('click', e => {
       if (e.target.closest('#ocr-download')) { moduleAction('ocr', 'downloadLangs'); return; }
       const chip = e.target.closest('[data-lang]');
@@ -891,22 +1021,37 @@ const OcrPage = {
   },
   update() {
     const s = modState('ocr');
-    const intro = document.getElementById('ocr-intro');
-    if (!intro) return;
-    intro.innerHTML = `${s.hotkeyEnabled ? `Appuie sur <kbd class="small">${esc(s.hotkeyLabel)}</kbd> n'importe où, puis` : 'Clique sur le bouton, puis'} sélectionne une zone : le texte est lu par Tesseract et copié. Ça marche sur les images, les vidéos en pause, les PDF scannés, les jeux…`;
     const st = document.getElementById('ocr-status');
+    if (!st) return;
     st.innerHTML = {
       downloading: `<span class="pill warn"><span class="led"></span>Téléchargement de la langue : ${esc(s.detail)}</span>`,
       reading: `<span class="pill warn"><span class="led"></span>Lecture en cours…</span>`,
       error: `<div class="banner" style="margin:0">${icon('info')}<div class="text">${esc(s.detail)}</div></div>`,
     }[s.status] || `<span class="pill ok"><span class="led"></span>Prêt${s.engineLoaded ? ' · moteur en mémoire' : ''}</span>`;
-    this.renderHotkey();
+    this.renderHotkeys();
+    this.renderShots();
     this.renderLangs();
     this.renderHistory();
   },
-  renderHotkey() {
-    const el = document.getElementById('ocr-hotkey');
-    if (el) el.innerHTML = hotkeyCardHTML('ocr', { title: 'Raccourci', desc: "Fige l'écran pour choisir la zone à lire, depuis n'importe quelle app." });
+  renderHotkeys() {
+    const a = document.getElementById('shot-hotkey'), b = document.getElementById('ocr-hotkey');
+    if (a) a.innerHTML = hotkeyCardHTML('ocr', { prefix: 'shot', compact: true, desc: 'Raccourci de la capture' });
+    if (b) b.innerHTML = hotkeyCardHTML('ocr', { compact: true, desc: 'Raccourci de la lecture' });
+  },
+  renderShots() {
+    const el = document.getElementById('shot-list');
+    if (!el) return;
+    const shots = modState('ocr').shots || [];
+    el.innerHTML = shots.length ? shots.slice(0, 12).map(x => `
+      <div class="shot-item">
+        <div class="shot-thumb" ${x.exists ? `data-shot-act="open" data-id="${x.id}" title="Ouvrir"` : ''}>${icon('camera')}<span>${x.w} × ${x.h}</span></div>
+        <div class="shot-meta"><div class="ellipsis small" title="${esc(x.path)}">${x.path ? esc(fileName(x.path)) : 'Copiée seulement'}</div>
+          <div class="faint small">${fmtAgo(x.time)}</div></div>
+        <div class="row" style="gap:2px">
+          ${x.exists ? `<button class="btn ghost icon-only" data-shot-act="show" data-id="${x.id}" title="Afficher dans le dossier">${icon('folder')}</button>` : ''}
+          <button class="btn ghost icon-only" data-shot-act="remove" data-id="${x.id}" title="Retirer de la liste">${icon('close')}</button>
+        </div>
+      </div>`).join('') : `<div class="card empty" style="grid-column:1/-1">${icon('camera')}<div>Tes captures apparaîtront ici.</div></div>`;
   },
   renderLangs() {
     const el = document.getElementById('ocr-langs');
@@ -915,10 +1060,10 @@ const OcrPage = {
     const missing = langs.filter(l => l.selected && !l.installed);
     const mb = missing.reduce((a, l) => a + l.size, 0) / 1e6;
     el.innerHTML = `
-      <div class="row wrap" style="gap:8px">${langs.map(l => `
+      <div class="row wrap" style="gap:6px">${langs.map(l => `
         <button class="tab ${l.selected ? 'active' : ''}" data-lang="${l.code}" title="${l.installed ? 'Installée' : 'Sera téléchargée (' + nf1.format(l.size / 1e6) + ' Mo)'}">
           ${esc(l.name)} ${l.installed ? '✓' : '↓'}</button>`).join('')}</div>
-      <div class="row wrap" style="margin-top:12px">
+      <div class="row wrap" style="margin-top:10px">
         <span class="muted small" style="flex:1">${missing.length
           ? `${missing.map(l => l.name).join(', ')} : ${nf1.format(mb)} Mo à télécharger une seule fois (fait automatiquement à la première lecture).`
           : 'Toutes les langues choisies sont installées. Moins de langues = lecture plus rapide.'}</span>
@@ -943,50 +1088,53 @@ const OcrPage = {
 
 // ------------------------------------------------------------------ Raccourcis clavier (bloc réutilisable)
 
-let hotkeyCapturing = null;   // id du module dont on choisit le raccourci
+let hotkeyCapturing = null;   // { id, prefix } : raccourci en cours de choix
 let hotkeyRerender = null;
+const hkKey = (prefix, name) => prefix ? `${prefix}_${name}` : name;
+const isCapturing = (id, prefix = '') => !!hotkeyCapturing && hotkeyCapturing.id === id && hotkeyCapturing.prefix === prefix;
 
-function hotkeyCardHTML(id, { title, desc, extra = '' }) {
+function hotkeyCardHTML(id, { title, desc, extra = '', prefix = '', compact = false }) {
   const s = modState(id);
-  const capturing = hotkeyCapturing === id;
+  const capturing = isCapturing(id, prefix);
+  const err = s[hkKey(prefix, 'hotkeyError')];
   return `
-    ${s.hotkeyError && !capturing ? `<div class="banner">${icon('info')}<div class="text">${esc(s.hotkeyError)}</div></div>` : ''}
-    <div class="card">
-      <div class="row wrap" style="gap:22px">
-        <div class="keycap ${capturing ? 'listening' : ''}" style="font-size:14px;height:38px;min-width:96px">${capturing ? 'Appuie…' : esc(s.hotkeyLabel || '—')}</div>
-        <div style="flex:1;min-width:220px"><h3>${esc(title)}</h3><div class="muted">${esc(desc)}</div></div>
+    ${err && !capturing ? `<div class="banner">${icon('info')}<div class="text">${esc(err)}</div></div>` : ''}
+    <div class="${compact ? '' : 'card'}">
+      <div class="row wrap" style="gap:14px">
+        <div class="keycap ${capturing ? 'listening' : ''}" style="font-size:14px;height:38px;min-width:96px">${capturing ? 'Appuie…' : esc(s[hkKey(prefix, 'hotkeyLabel')] || '—')}</div>
+        <div style="flex:1;min-width:180px">${title ? `<h3>${esc(title)}</h3>` : ''}<div class="muted">${esc(desc)}</div></div>
         ${capturing
-          ? `<div class="stack" style="align-items:flex-end"><span class="pill warn"><span class="led"></span>Appuie sur la combinaison (ex. Ctrl + Alt + V)</span><button class="btn" data-hk="cancel">Annuler</button></div>`
-          : `<button class="btn primary" data-hk="capture">${icon('keyboard')} Changer le raccourci</button>`}
+          ? `<div class="stack" style="align-items:flex-end;gap:6px"><span class="pill warn"><span class="led"></span>Appuie sur la combinaison</span><button class="btn" data-hk="cancel">Annuler</button></div>`
+          : `<button class="btn" data-hk="capture">${icon('keyboard')} Changer</button>`}
       </div>
-      <div class="row wrap" style="margin-top:18px;gap:28px">
-        <label class="row"><input type="checkbox" class="switch" data-hk-enabled ${s.hotkeyEnabled ? 'checked' : ''}> Raccourci activé</label>
+      <div class="row wrap" style="margin-top:12px;gap:22px">
+        <label class="row"><input type="checkbox" class="switch" data-hk-enabled ${s[hkKey(prefix, 'hotkeyEnabled')] ? 'checked' : ''}> Raccourci activé</label>
         ${extra}
       </div>
     </div>`;
 }
 
-function bindHotkeyCard(el, id, rerender) {
+function bindHotkeyCard(el, id, rerender, prefix = '') {
   el.addEventListener('click', e => {
     const b = e.target.closest('[data-hk]');
     if (!b) return;
     if (b.dataset.hk === 'capture') {
       if (hotkeyCapturing) stopHotkeyCapture(true);
-      hotkeyCapturing = id; hotkeyRerender = rerender;
-      moduleAction(id, 'hotkeyCaptureStart');
+      hotkeyCapturing = { id, prefix }; hotkeyRerender = rerender;
+      moduleAction(id, 'hotkeyCaptureStart', { hotkey: prefix });
       rerender();
     }
     if (b.dataset.hk === 'cancel') stopHotkeyCapture(true);
   });
   el.addEventListener('change', e => {
-    if (e.target.matches('[data-hk-enabled]')) moduleAction(id, 'setHotkeyEnabled', { value: e.target.checked });
+    if (e.target.matches('[data-hk-enabled]')) moduleAction(id, 'setHotkeyEnabled', { value: e.target.checked, hotkey: prefix });
   });
 }
 
 function stopHotkeyCapture(cancel) {
-  const id = hotkeyCapturing, rerender = hotkeyRerender;
+  const cap = hotkeyCapturing, rerender = hotkeyRerender;
   hotkeyCapturing = null; hotkeyRerender = null;
-  if (cancel && id) moduleAction(id, 'hotkeyCaptureCancel');
+  if (cancel && cap) moduleAction(cap.id, 'hotkeyCaptureCancel', { hotkey: cap.prefix });
   if (rerender) rerender();
 }
 
@@ -1002,9 +1150,9 @@ document.addEventListener('keydown', e => {
   const mods = (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.shiftKey ? 4 : 0) | (e.metaKey ? 8 : 0);
   const keyLabel = isF ? e.key : KEY_NAMES[e.code] || (e.code.startsWith('Key') ? e.code.slice(3) : e.code.startsWith('Digit') ? e.code.slice(5) : e.key.toUpperCase());
   const label = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Maj', e.metaKey && 'Win', keyLabel].filter(Boolean).join(' + ');
-  const id = hotkeyCapturing;
+  const cap = hotkeyCapturing;
   stopHotkeyCapture(false);
-  moduleAction(id, 'setHotkey', { mods, vk: e.keyCode, label });
+  moduleAction(cap.id, 'setHotkey', { mods, vk: e.keyCode, label, hotkey: cap.prefix });
   toast('Raccourci : ' + label);
 }, true);
 
@@ -1507,6 +1655,19 @@ const UpdatesPage = {
 
 const Mock = {
   state: null,
+  stats(now) {
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      days.push({ date, active: 3600 + ((i * 2477) % 14000), events: { copy: 12 + i, ocr: 2, screenshot: 1, enterFix: 3 },
+        apps: [['Google Chrome', 5400], ['rekordbox', 2600], ['Minecraft', 2100], ['Visual Studio Code', 1500], ['Discord', 900], ['LumaFusion', 400]].map(([name, sec]) => ({ name, sec: sec - i * 60 })) });
+    }
+    const h0 = Math.floor(now / 3600) - 47;
+    return { days, week: days[6].apps.map(a => ({ ...a, sec: a.sec * 6 })), since: now - 86400 * 9,
+      hours: Array.from({ length: 48 }, (_, i) => ({ hour: h0 + i, cpu: 15 + 20 * Math.abs(Math.sin(i / 5)), ram: 55 + 10 * Math.sin(i / 9) })),
+      totals: { copy: 320, ocr: 41, screenshot: 17, enterFix: 58, appGroup: 23, placeLaunch: 9, programStop: 14, programRelaunch: 11 } };
+  },
   init() {
     const now = Math.floor(Date.now() / 1000);
     this.state = {
@@ -1516,6 +1677,7 @@ const Mock = {
       modules: [
         { id: 'monitor', name: 'Moniteur', description: 'Processeur, mémoire, disque et batterie en direct.', enabled: true, alwaysOn: true, running: true, state: {} },
         { id: 'converter', name: 'Convertisseur', description: 'Unités et devises.', enabled: true, alwaysOn: true, running: true, state: {} },
+        { id: 'stats', name: 'Statistiques', description: "Temps d'écran par app, utilisation du PC et tes chiffres ToolBox (tout reste sur ton PC).", enabled: true, running: true, state: Mock.stats(now) },
         { id: 'processes', name: 'Programmes', description: "Arrête les programmes inutiles pour libérer de la mémoire, puis relance-les d'un clic.", enabled: true, running: true, state: {
           useless: ['c:\\program files\\teams\\ms-teams.exe'], lastEvent: '', stopped: [{ path: 'C:\\Users\\Mederic\\AppData\\Local\\Discord\\Discord.exe', name: 'Discord', time: now - 300 }] } },
         { id: 'enter_guard', name: 'Garde Enter', description: "Supprime la touche voisine d'Enter frappée par accident.", enabled: true, running: true, state: { keyName: 'À', isDefaultKey: true, thresholdMs: 80, corrections: 12, exclusions: [], capturing: false } },
@@ -1523,8 +1685,10 @@ const Mock = {
           { id: 3, text: 'https://github.com/Mede2026/ToolBox', time: now - 30, pinned: false },
           { id: 2, text: 'Exercice 4 : 3/4 + 5/6 = 19/12', time: now - 600, pinned: true },
           { id: 1, text: 'Massif de Charlevoix — horaire des remontées', time: now - 7200, pinned: false }] } },
-        { id: 'ocr', name: "Texte à l'écran", description: "Sélectionne une zone de l'écran : le texte est lu (Tesseract) et copié.", enabled: true, running: true, state: {
-          hotkeyEnabled: true, hotkeyLabel: 'Ctrl + Alt + T', hotkeyError: '', singleLine: false, notify: true, status: 'idle', detail: '', engineLoaded: false,
+        { id: 'ocr', name: "Capture d'écran", description: "Capture une zone de l'écran en image, ou lis le texte qu'elle contient (OCR).", enabled: true, running: true, state: {
+          hotkeyEnabled: true, hotkeyLabel: 'Ctrl + Alt + T', hotkeyError: '', shot_hotkeyEnabled: true, shot_hotkeyLabel: 'Ctrl + Alt + S', shot_hotkeyError: '',
+          shotSave: true, shotFolder: 'C:\\Users\\Mederic\\Pictures\\Captures ToolBox',
+          shots: [{ id: 9, path: 'C:\\Users\\Mederic\\Pictures\\Captures ToolBox\\Capture 2026-09-29 23h40 12.png', time: now - 200, w: 1280, h: 720, exists: true }], singleLine: false, notify: true, status: 'idle', detail: '', engineLoaded: false,
           langs: [['fra', 'Français', 1130365, true, true], ['eng', 'Anglais', 4113088, true, true], ['spa', 'Espagnol', 2294433, false, false], ['deu', 'Allemand', 1525436, false, false], ['ita', 'Italien', 2701314, false, false], ['por', 'Portugais', 1982756, false, false]]
             .map(([code, name, size, installed, selected]) => ({ code, name, size, installed, selected })),
           history: [{ id: 1, text: 'Chapitre 3 — Les fractions équivalentes\nDeux fractions sont équivalentes si elles représentent la même quantité.', time: now - 90, ms: 640 }] } },

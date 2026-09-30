@@ -12,6 +12,7 @@
 #include "modules/place_launcher.h"
 #include "modules/process_manager.h"
 #include "modules/screen_ocr.h"
+#include "modules/stats.h"
 #include "modules/system_monitor.h"
 #include "resource_ids.h"
 #include "util.h"
@@ -83,13 +84,14 @@ void App::CreateModules() {
   auto push = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_PUSH_STATE, 0, 0); };
 
   auto clip_popup = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_CLIP_POPUP, 0, 0); };
-  auto ocr_hotkey = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_OCR_START, 0, 0); };
+  auto ocr_hotkey = [hwnd = hwnd_](bool shot) { PostMessageW(hwnd, WM_APP_OCR_START, shot ? 2 : 0, 0); };
   auto notify = [this](const std::string& title, const std::string& text) { Notify(title, text); };
 
   // ---- Liste des fonctions (ordre = ordre dans le menu) : ajouter les nouveaux modules ici ----
   // Les fonctions toujours actives d'abord.
   modules_.push_back(std::make_unique<SystemMonitor>());
   modules_.push_back(std::make_unique<UiModule>("converter", "Convertisseur", "Unités et devises.", /*always_on=*/true));
+  modules_.push_back(std::make_unique<Stats>(push));
   modules_.push_back(std::make_unique<ProcessManager>());
   modules_.push_back(std::make_unique<EnterGuard>(push));
   modules_.push_back(std::make_unique<ClipboardHistory>(hwnd_, push, clip_popup));
@@ -98,6 +100,11 @@ void App::CreateModules() {
   modules_.push_back(std::make_unique<PlaceLauncher>(push));
 
   for (auto& m : modules_) m->LoadConfig(settings_.Module(m->Id()));
+
+  // Les modules signalent leurs actions (texte lu, copie…) aux Statistiques.
+  Module::event_sink = [this](const std::string& event) {
+    if (auto* stats = static_cast<Stats*>(FindModule("stats")); stats && stats->Running()) stats->Count(event);
+  };
 }
 
 App::~App() {
@@ -262,7 +269,7 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_APP_OCR_START:
-      StartOcr(wparam != 0);
+      StartOcr((wparam & 1) != 0, (wparam & 2) != 0);
       return 0;
 
     case WM_APP_SHOW:
@@ -475,7 +482,7 @@ void App::OnWebMessage(const json& msg) {
     }
     return;
   } else if (type == "ocrCapture") {
-    StartOcr(true);
+    StartOcr(true, msg.value("shot", false));
     return;
   } else if (type == "openDataDir") {
     ShellExecuteW(nullptr, L"open", util::DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -734,9 +741,10 @@ LRESULT CALLBACK App::PopupProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 
 // ---------------------------------------------------------------- Texte à l'écran (OCR)
 
-void App::StartOcr(bool from_ui) {
+void App::StartOcr(bool from_ui, bool screenshot) {
   Module* ocr = FindModule("ocr");
   if (!ocr || !ocr->Running()) return;
+  ocr_screenshot_ = screenshot;
   if (from_ui && IsWindowVisible(hwnd_)) {
     // Bouton dans ToolBox : on cache la fenêtre pour qu'elle ne soit pas sur la photo.
     ocr_restore_main_ = true;
@@ -750,7 +758,7 @@ void App::StartOcr(bool from_ui) {
 void App::BeginOcrNow() {
   auto* ocr = static_cast<ScreenOcr*>(FindModule("ocr"));
   if (!ocr) return;
-  ocr->BeginCapture([this] {
+  ocr->BeginCapture(ocr_screenshot_, [this] {
     if (ocr_restore_main_) {
       ocr_restore_main_ = false;
       ShowMainWindow();
