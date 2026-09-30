@@ -27,6 +27,9 @@ enum : UINT {
   WM_APP_OCR_START,               // capture : wparam = mode (0 texte, 1 image, 2 pipette)
 };
 
+// Libère le verrou « une seule ToolBox » (main.cpp).
+void ReleaseSingleInstance();
+
 class App {
  public:
   App(HINSTANCE instance, bool start_hidden);

@@ -27,6 +27,9 @@ std::string FileDescription(const std::wstring& exe_path);
 // Chemin complet de l'exécutable d'un processus (vide si inaccessible).
 std::wstring ProcessPath(DWORD pid);
 
+// Ajoute une ligne à %APPDATA%\ToolBox\crash.log (erreur non fatale).
+void LogError(const std::string& what);
+
 // Met du texte dans le presse-papiers.
 bool SetClipboardText(HWND owner, const std::wstring& text);
 

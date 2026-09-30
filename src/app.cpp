@@ -204,7 +204,13 @@ LRESULT CALLBACK App::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
   } else {
     self = reinterpret_cast<App*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
   }
-  return self ? self->HandleMessage(msg, wparam, lparam) : DefWindowProcW(hwnd, msg, wparam, lparam);
+  if (!self) return DefWindowProcW(hwnd, msg, wparam, lparam);
+  try {
+    return self->HandleMessage(msg, wparam, lparam);
+  } catch (const std::exception& e) {  // une erreur ne doit pas fermer toute l'app
+    util::LogError(std::string("message ") + std::to_string(msg) + " : " + e.what());
+    return DefWindowProcW(hwnd, msg, wparam, lparam);
+  }
 }
 
 LRESULT App::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -383,7 +389,13 @@ void App::CreateMainWebView() {
                              if (SUCCEEDED(args->get_WebMessageAsJson(&raw)) && raw) {
                                json msg = json::parse(util::ToUtf8(raw), nullptr, false);
                                CoTaskMemFree(raw);
-                               if (msg.is_object()) OnWebMessage(msg);
+                               if (msg.is_object()) {
+                       try {
+                         OnWebMessage(msg);
+                       } catch (const std::exception& e) {
+                         util::LogError(std::string("interface : ") + e.what());
+                       }
+                     }
                              }
                              return S_OK;
                            })
@@ -698,7 +710,13 @@ void App::CreatePopupWebView() {
                       if (SUCCEEDED(args->get_WebMessageAsJson(&raw)) && raw) {
                         json msg = json::parse(util::ToUtf8(raw), nullptr, false);
                         CoTaskMemFree(raw);
-                        if (msg.is_object()) OnPopupMessage(msg);
+                        if (msg.is_object()) {
+                        try {
+                          OnPopupMessage(msg);
+                        } catch (const std::exception& e) {
+                          util::LogError(std::string("fenêtre rapide : ") + e.what());
+                        }
+                      }
                       }
                       return S_OK;
                     })
@@ -852,6 +870,7 @@ void App::RestartForUpdate() {
   if (!IsWindowVisible(hwnd_)) cmd += L" --tray";
   STARTUPINFOW si{sizeof(si)};
   PROCESS_INFORMATION pi{};
+  ReleaseSingleInstance();  // la nouvelle version démarre sans attendre notre fermeture
   if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);

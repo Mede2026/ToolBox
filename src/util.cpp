@@ -6,6 +6,8 @@
 #include <secext.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
 #include <cstring>
 #include <vector>
 #include <cwctype>
@@ -112,6 +114,16 @@ std::wstring ProcessPath(DWORD pid) {
     CloseHandle(proc);
   }
   return out;
+}
+
+void LogError(const std::string& what) {
+  std::ofstream log(DataDir() / L"crash.log", std::ios::app);
+  SYSTEMTIME t;
+  GetLocalTime(&t);
+  char when[32];
+  snprintf(when, sizeof(when), "%04d-%02d-%02d %02d:%02d:%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+           t.wSecond);
+  log << when << "  (non fatale) " << what << "\n";
 }
 
 bool SetClipboardText(HWND owner, const std::wstring& text) {
