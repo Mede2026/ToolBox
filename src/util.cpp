@@ -6,6 +6,7 @@
 #include <secext.h>
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 #include <cwctype>
 
@@ -111,6 +112,22 @@ std::wstring ProcessPath(DWORD pid) {
     CloseHandle(proc);
   }
   return out;
+}
+
+bool SetClipboardText(HWND owner, const std::wstring& text) {
+  for (int i = 0; i < 10 && !OpenClipboard(owner); ++i) Sleep(20);
+  EmptyClipboard();
+  const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+  HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+  bool ok = false;
+  if (mem) {
+    memcpy(GlobalLock(mem), text.c_str(), bytes);
+    GlobalUnlock(mem);
+    ok = SetClipboardData(CF_UNICODETEXT, mem) != nullptr;
+    if (!ok) GlobalFree(mem);
+  }
+  CloseClipboard();
+  return ok;
 }
 
 std::wstring UserFirstName() {

@@ -7,6 +7,7 @@
 #include <string>
 
 #include "modules/app_launcher.h"
+#include "modules/color_picker.h"
 #include "modules/clipboard_history.h"
 #include "modules/enter_guard.h"
 #include "modules/place_launcher.h"
@@ -28,6 +29,8 @@ constexpr UINT_PTR kTimerTick = 1;          // Tick des modules
 constexpr UINT_PTR kTimerUpdate = 2;        // vérification des mises à jour
 constexpr UINT_PTR kTimerLive = 3;          // données en direct (fenêtre visible seulement)
 constexpr UINT_PTR kTimerOcr = 4;           // délai avant la capture (le temps de cacher ToolBox)
+constexpr UINT_PTR kTimerUnload = 5;        // libère l'interface quand ToolBox reste caché
+constexpr UINT kUnloadAfterMs = 3 * 60 * 1000;
 constexpr UINT kLiveMs = 1000;
 constexpr UINT kTickMs = 10 * 1000;
 constexpr UINT kUpdateEveryMs = 6 * 60 * 60 * 1000;
@@ -84,7 +87,8 @@ void App::CreateModules() {
   auto push = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_PUSH_STATE, 0, 0); };
 
   auto clip_popup = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_CLIP_POPUP, 0, 0); };
-  auto ocr_hotkey = [hwnd = hwnd_](bool shot) { PostMessageW(hwnd, WM_APP_OCR_START, shot ? 2 : 0, 0); };
+  auto ocr_hotkey = [hwnd = hwnd_](bool shot) { PostMessageW(hwnd, WM_APP_OCR_START, shot ? 1 : 0, 0); };
+  auto color_hotkey = [hwnd = hwnd_] { PostMessageW(hwnd, WM_APP_OCR_START, 2, 0); };
   auto notify = [this](const std::string& title, const std::string& text) { Notify(title, text); };
 
   // ---- Liste des fonctions (ordre = ordre dans le menu) : ajouter les nouveaux modules ici ----
@@ -96,6 +100,7 @@ void App::CreateModules() {
   modules_.push_back(std::make_unique<EnterGuard>(push));
   modules_.push_back(std::make_unique<ClipboardHistory>(hwnd_, push, clip_popup));
   modules_.push_back(std::make_unique<ScreenOcr>(hwnd_, instance_, push, ocr_hotkey, notify));
+  modules_.push_back(std::make_unique<ColorPickerModule>(hwnd_, instance_, push, color_hotkey, notify));
   modules_.push_back(std::make_unique<AppLauncher>());
   modules_.push_back(std::make_unique<PlaceLauncher>(push));
 
@@ -171,7 +176,9 @@ void App::ShowMainWindow() {
   if (IsIconic(hwnd_)) ShowWindow(hwnd_, SW_RESTORE);
   ShowWindow(hwnd_, SW_SHOW);
   SetForegroundWindow(hwnd_);
+  KillTimer(hwnd_, kTimerUnload);
   if (controller_) controller_->put_IsVisible(TRUE);
+  else CreateMainWebView();  // interface libérée pendant que ToolBox était caché
   SetTimer(hwnd_, kTimerLive, kLiveMs, nullptr);
   PushState();
 }
@@ -180,6 +187,7 @@ void App::HideMainWindow() {
   ShowWindow(hwnd_, SW_HIDE);
   KillTimer(hwnd_, kTimerLive);
   if (controller_) controller_->put_IsVisible(FALSE);  // WebView2 consomme moins caché
+  if (settings_.Get(settings_.Root(), "lowMemory", true)) SetTimer(hwnd_, kTimerUnload, kUnloadAfterMs, nullptr);
 }
 
 void App::Quit() {
@@ -242,6 +250,9 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
         for (auto& m : modules_) {
           if (m->Running()) m->Tick();
         }
+      } else if (wparam == kTimerUnload) {
+        KillTimer(hwnd_, kTimerUnload);
+        ReleaseMainWebView();
       } else if (wparam == kTimerOcr) {
         KillTimer(hwnd_, kTimerOcr);
         BeginOcrNow();
@@ -269,7 +280,7 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wparam, LPARAM lparam) {
       return 0;
 
     case WM_APP_OCR_START:
-      StartOcr((wparam & 1) != 0, (wparam & 2) != 0);
+      StartOcr(false, static_cast<int>(wparam));
       return 0;
 
     case WM_APP_SHOW:
@@ -317,65 +328,9 @@ void App::InitWebView() {
           [this](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
             if (FAILED(result) || !env) return result;
             env_ = env;
-            return env->CreateCoreWebView2Controller(
-                hwnd_, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                           [this](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
-                             if (FAILED(result) || !controller) return result;
-                             controller_ = controller;
-                             controller_->get_CoreWebView2(&webview_);
-
-                             ComPtr<ICoreWebView2Controller2> c2;
-                             if (SUCCEEDED(controller_.As(&c2))) {
-                               c2->put_DefaultBackgroundColor({255, 32, 32, 32});  // pas de flash blanc
-                             }
-
-                             ComPtr<ICoreWebView2Settings> s;
-                             webview_->get_Settings(&s);
-                             s->put_IsStatusBarEnabled(FALSE);
-                             s->put_IsZoomControlEnabled(FALSE);
-#ifdef NDEBUG
-                             s->put_AreDevToolsEnabled(FALSE);
-                             s->put_AreDefaultContextMenusEnabled(FALSE);
-#endif
-                             ComPtr<ICoreWebView2Settings3> s3;
-                             if (SUCCEEDED(s.As(&s3))) s3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
-
-                             webview_->add_WebMessageReceived(
-                                 Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                                     [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
-                                       LPWSTR raw = nullptr;
-                                       if (SUCCEEDED(args->get_WebMessageAsJson(&raw)) && raw) {
-                                         json msg = json::parse(util::ToUtf8(raw), nullptr, false);
-                                         CoTaskMemFree(raw);
-                                         if (msg.is_object()) OnWebMessage(msg);
-                                       }
-                                       return S_OK;
-                                     })
-                                     .Get(),
-                                 nullptr);
-
-                             // Les liens externes s'ouvrent dans le navigateur, pas dans l'app.
-                             webview_->add_NewWindowRequested(
-                                 Callback<ICoreWebView2NewWindowRequestedEventHandler>(
-                                     [](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) {
-                                       LPWSTR uri = nullptr;
-                                       args->get_Uri(&uri);
-                                       if (uri && wcsncmp(uri, L"https://", 8) == 0) {
-                                         ShellExecuteW(nullptr, L"open", uri, nullptr, nullptr, SW_SHOWNORMAL);
-                                       }
-                                       CoTaskMemFree(uri);
-                                       args->put_Handled(TRUE);
-                                       return S_OK;
-                                     })
-                                     .Get(),
-                                 nullptr);
-
-                             ResizeWebView();
-                             controller_->put_IsVisible(IsWindowVisible(hwnd_));
-                             webview_->NavigateToString(LoadUiHtml(instance_).c_str());
-                             return S_OK;
-                           })
-                           .Get());
+            if (IsWindowVisible(hwnd_) || !start_hidden_) CreateMainWebView();
+            if (settings_.Get(settings_.Root(), "instantPopup", true)) PreparePopup();
+            return S_OK;
           })
           .Get());
 
@@ -390,6 +345,80 @@ void App::InitWebView() {
                     SW_SHOWNORMAL);
     }
   }
+}
+
+// L'interface principale. Détruite quand ToolBox reste caché (économie de mémoire),
+// recréée à la réouverture de la fenêtre.
+void App::CreateMainWebView() {
+  if (!env_ || controller_ || creating_webview_) return;
+  creating_webview_ = true;
+  env_->CreateCoreWebView2Controller(
+      hwnd_, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+                 [this](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
+                   creating_webview_ = false;
+                   if (FAILED(result) || !controller) return result;
+                   controller_ = controller;
+                   controller_->get_CoreWebView2(&webview_);
+
+                   ComPtr<ICoreWebView2Controller2> c2;
+                   if (SUCCEEDED(controller_.As(&c2))) {
+                     c2->put_DefaultBackgroundColor({255, 32, 32, 32});  // pas de flash blanc
+                   }
+
+                   ComPtr<ICoreWebView2Settings> s;
+                   webview_->get_Settings(&s);
+                   s->put_IsStatusBarEnabled(FALSE);
+                   s->put_IsZoomControlEnabled(FALSE);
+#ifdef NDEBUG
+                   s->put_AreDevToolsEnabled(FALSE);
+                   s->put_AreDefaultContextMenusEnabled(FALSE);
+#endif
+                   ComPtr<ICoreWebView2Settings3> s3;
+                   if (SUCCEEDED(s.As(&s3))) s3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
+
+                   webview_->add_WebMessageReceived(
+                       Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+                           [this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
+                             LPWSTR raw = nullptr;
+                             if (SUCCEEDED(args->get_WebMessageAsJson(&raw)) && raw) {
+                               json msg = json::parse(util::ToUtf8(raw), nullptr, false);
+                               CoTaskMemFree(raw);
+                               if (msg.is_object()) OnWebMessage(msg);
+                             }
+                             return S_OK;
+                           })
+                           .Get(),
+                       nullptr);
+
+                   // Les liens externes s'ouvrent dans le navigateur, pas dans l'app.
+                   webview_->add_NewWindowRequested(
+                       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
+                           [](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) {
+                             LPWSTR uri = nullptr;
+                             args->get_Uri(&uri);
+                             if (uri && wcsncmp(uri, L"https://", 8) == 0) {
+                               ShellExecuteW(nullptr, L"open", uri, nullptr, nullptr, SW_SHOWNORMAL);
+                             }
+                             CoTaskMemFree(uri);
+                             args->put_Handled(TRUE);
+                             return S_OK;
+                           })
+                           .Get(),
+                       nullptr);
+
+                   ResizeWebView();
+                   controller_->put_IsVisible(IsWindowVisible(hwnd_));
+                   webview_->NavigateToString(LoadUiHtml(instance_).c_str());
+                   return S_OK;
+                 })
+                 .Get());
+}
+
+void App::ReleaseMainWebView() {
+  if (!controller_ || IsWindowVisible(hwnd_)) return;
+  controller_->Close();
+  controller_.Reset();
+  webview_.Reset();
 }
 
 void App::ResizeWebView() {
@@ -427,6 +456,8 @@ void App::PushState() {
         {"startWithWindows", settings_.Get(r, "startWithWindows", false)},
         {"minimizeToTray", settings_.Get(r, "minimizeToTray", true)},
         {"autoUpdate", settings_.Get(r, "autoUpdate", true)},
+        {"lowMemory", settings_.Get(r, "lowMemory", true)},
+        {"instantPopup", settings_.Get(r, "instantPopup", true)},
         {"dataDir", util::ToUtf8(util::DataDir().wstring())},
         {"userName", util::ToUtf8(util::UserFirstName())}}},
       {"modules", modules},
@@ -456,7 +487,8 @@ void App::OnWebMessage(const json& msg) {
     ApplyModules();
   } else if (type == "setSetting") {
     const std::string key = msg.value("key", "");
-    if (key == "startWithWindows" || key == "minimizeToTray" || key == "autoUpdate") {
+    if (key == "startWithWindows" || key == "minimizeToTray" || key == "autoUpdate" || key == "lowMemory" ||
+        key == "instantPopup") {
       settings_.Root()[key] = msg.value("value", false);
       if (key == "startWithWindows") ApplyStartWithWindows();
     }
@@ -482,7 +514,10 @@ void App::OnWebMessage(const json& msg) {
     }
     return;
   } else if (type == "ocrCapture") {
-    StartOcr(true, msg.value("shot", false));
+    StartOcr(true, msg.value("shot", false) ? 1 : 0);
+    return;
+  } else if (type == "colorPick") {
+    StartOcr(true, 2);
     return;
   } else if (type == "openDataDir") {
     ShellExecuteW(nullptr, L"open", util::DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -586,27 +621,12 @@ void App::ShowClipboardPopup() {
   const HWND fg = GetForegroundWindow();
   if (fg != popup_hwnd_) prev_foreground_ = fg;
 
-  const UINT dpi = GetDpiForSystem();
-  const int w = MulDiv(400, dpi, 96), h = MulDiv(500, dpi, 96);
-
-  if (!popup_hwnd_) {
-    WNDCLASSEXW wc{sizeof(wc)};
-    wc.lpfnWndProc = PopupProc;
-    wc.hInstance = instance_;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = CreateSolidBrush(RGB(32, 32, 32));
-    wc.lpszClassName = kPopupClass;
-    RegisterClassExW(&wc);
-    popup_hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kPopupClass, L"Presse-papiers", WS_POPUP | WS_BORDER,
-                                  0, 0, w, h, nullptr, nullptr, instance_, this);
-    const int round = 2;  // DWMWCP_ROUND : coins arrondis sous Windows 11
-    DwmSetWindowAttribute(popup_hwnd_, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &round, sizeof(round));
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(popup_hwnd_, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &dark, sizeof(dark));
-    CreatePopupWebView();
-  }
+  PreparePopup();
+  if (!popup_hwnd_) return;
 
   // Près de la souris, sans dépasser de l'écran.
+  const UINT dpi = GetDpiForSystem();
+  const int w = MulDiv(400, dpi, 96), h = MulDiv(500, dpi, 96);
   POINT pt;
   GetCursorPos(&pt);
   MONITORINFO mi{sizeof(mi)};
@@ -622,6 +642,29 @@ void App::ShowClipboardPopup() {
   }
   PushState();
   if (popup_webview_) popup_webview_->PostWebMessageAsJson(L"{\"type\":\"popupShown\"}");
+}
+
+void App::PreparePopup() {
+  if (popup_hwnd_ || !env_) return;
+  // Au démarrage, seulement si l'option « fenêtre rapide instantanée » est active.
+  Module* clip = FindModule("clipboard");
+  if (!clip || !clip->Running()) return;
+
+  const UINT dpi = GetDpiForSystem();
+  WNDCLASSEXW wc{sizeof(wc)};
+  wc.lpfnWndProc = PopupProc;
+  wc.hInstance = instance_;
+  wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  wc.hbrBackground = CreateSolidBrush(RGB(32, 32, 32));
+  wc.lpszClassName = kPopupClass;
+  RegisterClassExW(&wc);
+  popup_hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kPopupClass, L"Presse-papiers", WS_POPUP | WS_BORDER,
+                                0, 0, MulDiv(400, dpi, 96), MulDiv(500, dpi, 96), nullptr, nullptr, instance_, this);
+  const int round = 2;  // DWMWCP_ROUND : coins arrondis sous Windows 11
+  DwmSetWindowAttribute(popup_hwnd_, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &round, sizeof(round));
+  BOOL dark = TRUE;
+  DwmSetWindowAttribute(popup_hwnd_, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &dark, sizeof(dark));
+  CreatePopupWebView();
 }
 
 void App::HidePopup() {
@@ -741,10 +784,10 @@ LRESULT CALLBACK App::PopupProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 
 // ---------------------------------------------------------------- Texte à l'écran (OCR)
 
-void App::StartOcr(bool from_ui, bool screenshot) {
-  Module* ocr = FindModule("ocr");
-  if (!ocr || !ocr->Running()) return;
-  ocr_screenshot_ = screenshot;
+void App::StartOcr(bool from_ui, int mode) {
+  Module* m = FindModule(mode == 2 ? "color" : "ocr");
+  if (!m || !m->Running()) return;
+  capture_mode_ = mode;
   if (from_ui && IsWindowVisible(hwnd_)) {
     // Bouton dans ToolBox : on cache la fenêtre pour qu'elle ne soit pas sur la photo.
     ocr_restore_main_ = true;
@@ -756,14 +799,17 @@ void App::StartOcr(bool from_ui, bool screenshot) {
 }
 
 void App::BeginOcrNow() {
-  auto* ocr = static_cast<ScreenOcr*>(FindModule("ocr"));
-  if (!ocr) return;
-  ocr->BeginCapture(ocr_screenshot_, [this] {
+  auto after = [this] {
     if (ocr_restore_main_) {
       ocr_restore_main_ = false;
       ShowMainWindow();
     }
-  });
+  };
+  if (capture_mode_ == 2) {
+    if (auto* color = static_cast<ColorPickerModule*>(FindModule("color"))) color->BeginPick(after);
+    return;
+  }
+  if (auto* ocr = static_cast<ScreenOcr*>(FindModule("ocr"))) ocr->BeginCapture(capture_mode_ == 1, after);
 }
 
 void App::Notify(const std::string& title, const std::string& text) {

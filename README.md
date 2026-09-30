@@ -15,10 +15,13 @@ Chaque fonction peut être **activée ou désactivée** depuis la barre latéral
 | **Presse-papiers** | Historique de tout ce qui est copié + **fenêtre rapide** ouverte par un raccourci au choix (Ctrl + Alt + V par défaut) qui colle l'élément choisi ; les mots de passe des gestionnaires sont ignorés |
 | **Capture d'écran** | Un raccourci fige l'écran et on sélectionne une zone : **image** (Ctrl + Alt + S) copiée et enregistrée en PNG dans Images\Captures ToolBox, ou **texte** (Ctrl + Alt + T) lu par **Tesseract** (OCR) et copié |
 | **Statistiques** | Temps d'écran par app, processeur et mémoire sur 48 h, compteurs des fonctions ToolBox (tout reste sur le PC) |
+| **Pipette** | Un raccourci (Ctrl + Alt + C) affiche une loupe : clic sur un pixel, sa couleur est copiée en HEX, RGB ou HSL |
 | **Raccourcis d'apps** | Groupes d'apps, de fichiers ou de sites à lancer d'un seul clic |
 | **Lancement par lieu** | Ouvre une ou plusieurs apps quand tu arrives quelque part (Wi-Fi et/ou GPS) |
 
 L'accueil regroupe les jauges, un convertisseur rapide (« 10 km en mi ») et des raccourcis vers chaque fonction.
+
+Performance : l'interface est libérée quand ToolBox reste caché 3 min, et la fenêtre du presse-papiers peut être préparée au démarrage (réglages dans Paramètres).
 
 Autres fonctions : recherche des fonctions (`Ctrl+F`), démarrage avec Windows, icône près de l'horloge, **mises à jour automatiques**.
 

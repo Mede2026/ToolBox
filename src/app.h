@@ -24,7 +24,7 @@ enum : UINT {
   WM_APP_UPDATE,                  // l'updater a changé d'état
   WM_APP_SHOW,                    // une 2e instance demande d'afficher la fenêtre
   WM_APP_CLIP_POPUP,              // raccourci du presse-papiers pressé
-  WM_APP_OCR_START,               // capture : wparam bit 0 = depuis l'interface, bit 1 = image (sinon texte)
+  WM_APP_OCR_START,               // capture : wparam = mode (0 texte, 1 image, 2 pipette)
 };
 
 class App {
@@ -40,6 +40,9 @@ class App {
 
   void CreateMainWindow();
   void InitWebView();
+  void CreateMainWebView();
+  void ReleaseMainWebView();
+  bool creating_webview_ = false;
   void ResizeWebView();
   void ShowMainWindow();
   void HideMainWindow();
@@ -63,16 +66,18 @@ class App {
   // Petite fenêtre de l'historique du presse-papiers (ouverte par raccourci clavier)
   static LRESULT CALLBACK PopupProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
   void ShowClipboardPopup();
+  void PreparePopup();  // crée la fenêtre rapide à l'avance (ouverture instantanée)
   void HidePopup();
   void CreatePopupWebView();
   void OnPopupMessage(const nlohmann::json& msg);
   void PasteIntoPreviousWindow();
 
   // Texte à l'écran (OCR)
-  void StartOcr(bool from_ui, bool screenshot);
+  // Captures : 0 = texte (OCR), 1 = image, 2 = pipette
+  void StartOcr(bool from_ui, int mode);
   void BeginOcrNow();
   bool ocr_restore_main_ = false;
-  bool ocr_screenshot_ = false;
+  int capture_mode_ = 0;
 
   // Notification près de l'horloge (bulle de l'icône ToolBox).
   void Notify(const std::string& title, const std::string& text);

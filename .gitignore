@@ -5,3 +5,4 @@ out/
 .vscode/
 *.user
 .vcpkg-bin/
+vcpkg_installed/

@@ -18,6 +18,11 @@ on:
 permissions:
   contents: write
 
+# Un nouveau push annule la compilation précédente de la même branche (inutile de finir l'ancienne).
+concurrency:
+  group: build-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
 env:
   # Version figée de vcpkg (gestionnaire de bibliothèques C++) : même Tesseract à chaque compilation.
   VCPKG_TAG: '2026.07.29'
@@ -49,39 +54,48 @@ jobs:
         with:
           arch: x64
 
+      # Tesseract déjà compilé, gardé en cache : il n'est recompilé que si vcpkg.json,
+      # le triplet ou VCPKG_TAG changent (et pas à chaque mise à jour de Visual Studio).
+      - name: Restaurer Tesseract (déjà compilé)
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-installed-${{ env.VCPKG_TAG }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
+
       - name: Installer vcpkg
         shell: pwsh
         run: |
           git clone --depth 1 --branch $env:VCPKG_TAG https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
-          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
-          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\.vcpkg-bin" | Out-Null
+          if ('${{ steps.vcpkg-cache.outputs.cache-hit }}' -ne 'true') {
+            & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+          }
           "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" >> $env:GITHUB_ENV
-          "VCPKG_DEFAULT_BINARY_CACHE=$env:GITHUB_WORKSPACE\.vcpkg-bin" >> $env:GITHUB_ENV
 
-      # Tesseract prend ~15 min à compiler la première fois : on garde le résultat en cache.
-      - name: Restaurer le cache vcpkg
-        id: vcpkg-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .vcpkg-bin
-          key: vcpkg-${{ env.VCPKG_TAG }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
-          restore-keys: vcpkg-${{ env.VCPKG_TAG }}-
-
-      - name: Cache des dépendances
+      - name: Cache WebView2 et json
         uses: actions/cache@v4
         with:
           path: build/deps
-          key: deps-${{ hashFiles('CMakeLists.txt') }}
+          key: deps-webview2-1.0.4258.31-json-3.11.3
 
       - name: Configurer
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release "-DTOOLBOX_VERSION=${{ steps.ver.outputs.version }}" "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+        shell: pwsh
+        run: |
+          $cmakeArgs = @('-S', '.', '-B', 'build', '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
+                    "-DTOOLBOX_VERSION=${{ steps.ver.outputs.version }}",
+                    "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake",
+                    "-DVCPKG_INSTALLED_DIR=$env:GITHUB_WORKSPACE/vcpkg_installed")
+          # Cache trouvé : on utilise Tesseract tel quel, sans rien recompiler.
+          if ('${{ steps.vcpkg-cache.outputs.cache-hit }}' -eq 'true') { $cmakeArgs += '-DVCPKG_MANIFEST_INSTALL=OFF' }
+          cmake @cmakeArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Enregistrer le cache vcpkg
+      - name: Enregistrer Tesseract dans le cache
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: .vcpkg-bin
-          key: vcpkg-${{ env.VCPKG_TAG }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
+          path: vcpkg_installed
+          key: vcpkg-installed-${{ env.VCPKG_TAG }}-${{ hashFiles('vcpkg.json', 'cmake/triplets/**') }}
 
       - name: Compiler
         run: cmake --build build --config Release

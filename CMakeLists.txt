@@ -71,12 +71,14 @@ add_executable(ToolBox WIN32
   src/settings.cpp
   src/updater.cpp
   src/util.cpp
+  src/color_pick.cpp
   src/geo.cpp
   src/hotkey.cpp
   src/http.cpp
   src/screen_select.cpp
   src/modules/app_launcher.cpp
   src/modules/clipboard_history.cpp
+  src/modules/color_picker.cpp
   src/modules/enter_guard.cpp
   src/modules/place_launcher.cpp
   src/modules/process_manager.cpp

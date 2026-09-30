@@ -91,6 +91,7 @@ const ICONS = {
   leaf: 'M5 19c0-8 5-13 14-14 0 9-5 14-13 14zM5 19l7-7',
   camera: 'M4 8.5a1.5 1.5 0 0 1 1.5-1.5h2.2l1.3-2h6l1.3 2h2.2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5zM12 16a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z',
   chart: 'M4 4v16h16M8 16v-4M12 16V8M16 16v-6',
+  drop: 'M12 3.5s6 6.4 6 10.5a6 6 0 0 1-12 0c0-4.1 6-10.5 6-10.5z',
   scan: 'M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 9.5h8M8 12.5h8M8 15.5h5',
   tray: 'M4 14h4l1.5 2.5h5L16 14h4M4 14l2.5-8h11l2.5 8v5H4z',
 };
@@ -171,6 +172,7 @@ const PAGES = [
   { id: 'enter_guard', label: 'Garde Enter', icon: 'keyboard', module: 'enter_guard', keys: 'a clavier touche accident entree faute', page: () => EnterGuardPage },
   { id: 'clipboard', label: 'Presse-papiers', icon: 'clipboard', module: 'clipboard', keys: 'copier coller ctrl c v historique texte', page: () => ClipboardPage },
   { id: 'ocr', label: "Capture d'écran", icon: 'camera', module: 'ocr', keys: 'capture screenshot image png ocr tesseract texte ecran lire copier scanner photo', page: () => OcrPage },
+  { id: 'color', label: 'Pipette', icon: 'drop', module: 'color', keys: 'pipette couleur color picker hex rgb hsl pixel', page: () => ColorPage },
   { id: 'app_launcher', label: "Raccourcis d'apps", icon: 'apps', module: 'app_launcher', keys: 'lancer groupe raccourci ouvrir apps', page: () => AppLauncherPage },
   { id: 'place_launcher', label: 'Lancement par lieu', icon: 'place', module: 'place_launcher', keys: 'gps wifi maison ecole lieu adresse position', page: () => PlacePage },
   { sep: true },
@@ -694,7 +696,7 @@ const ProcessesPage = {
 const EVENT_LABELS = {
   copy: ['Textes copiés', 'clipboard'], ocr: ['Textes lus (OCR)', 'scan'], screenshot: ["Captures d'écran", 'camera'],
   enterFix: ['Fautes Enter corrigées', 'keyboard'], appGroup: ["Groupes d'apps lancés", 'apps'],
-  placeLaunch: ['Lancements par lieu', 'place'], programStop: ['Programmes arrêtés', 'stop'], programRelaunch: ['Programmes relancés', 'update'],
+  colorPick: ['Couleurs copiées', 'drop'], placeLaunch: ['Lancements par lieu', 'place'], programStop: ['Programmes arrêtés', 'stop'], programRelaunch: ['Programmes relancés', 'update'],
 };
 let statsRange = 'today';
 
@@ -1083,6 +1085,72 @@ const OcrPage = {
           <button class="btn ghost icon-only" data-ocr-act="delete" data-id="${e.id}" title="Supprimer">${icon('trash')}</button>
         </div>
       </div>`).join('') : `<div class="card empty">${icon('scan')}<div>Les textes lus apparaîtront ici.</div></div>`;
+  },
+};
+
+// ------------------------------------------------------------------ Pipette
+
+const ColorPage = {
+  render() {
+    return `
+    <div class="card">
+      <div class="row wrap" style="gap:18px">
+        <div class="color-big" id="color-big"></div>
+        <div style="flex:1;min-width:220px">
+          <h2 style="margin:0 0 4px">Choisir une couleur à l'écran</h2>
+          <div class="muted small">Une loupe suit ta souris : clique sur le pixel voulu (les flèches visent au pixel près). La couleur est copiée.</div>
+          <div class="tabs" style="margin:12px 0 0" id="color-formats">
+            ${['hex', 'rgb', 'hsl'].map(f => `<button class="tab" data-format="${f}">${f.toUpperCase()}</button>`).join('')}
+          </div>
+        </div>
+        <button class="btn primary big" id="color-go">${icon('drop')} Choisir une couleur</button>
+      </div>
+    </div>
+    <div id="color-hotkey"></div>
+    <div class="row" style="margin:18px 0 8px"><div class="section-title" style="margin:0">Dernières couleurs</div><span class="spacer"></span>
+      <button class="btn ghost" id="color-clear">${icon('trash')} Tout effacer</button></div>
+    <div class="swatch-grid" id="color-list"></div>`;
+  },
+  bind(root) {
+    $('#color-go', root).addEventListener('click', () => send({ type: 'colorPick' }));
+    bindHotkeyCard($('#color-hotkey', root), 'color', () => this.renderHotkey());
+    $('#color-clear', root).addEventListener('click', () => moduleAction('color', 'clear'));
+    $('#color-formats', root).addEventListener('click', e => {
+      const b = e.target.closest('[data-format]');
+      if (b) moduleAction('color', 'setFormat', { value: b.dataset.format });
+    });
+    $('#color-list', root).addEventListener('click', e => {
+      const del = e.target.closest('[data-color-del]');
+      if (del) { moduleAction('color', 'delete', { id: +del.dataset.colorDel }); return; }
+      const b = e.target.closest('[data-color-copy]');
+      if (!b) return;
+      moduleAction('color', 'copy', { id: +b.dataset.colorCopy, format: b.dataset.format || undefined });
+      toast('Copié : ' + b.dataset.text);
+    });
+    this.update();
+  },
+  update() {
+    const s = modState('color');
+    const big = document.getElementById('color-big');
+    if (!big) return;
+    const last = (s.history || [])[0];
+    big.style.background = last ? last.hex : 'repeating-conic-gradient(#333 0 25%, #2a2a2a 0 50%) 0 0 / 16px 16px';
+    big.innerHTML = last ? `<span>${esc(last[s.format] || last.hex)}</span>` : '';
+    $$('#color-formats [data-format]').forEach(b => b.classList.toggle('active', b.dataset.format === s.format));
+    this.renderHotkey();
+    const list = s.history || [];
+    document.getElementById('color-list').innerHTML = list.length ? list.map(c => `
+      <div class="swatch">
+        <div class="swatch-color" style="background:${esc(c.hex)}" data-color-copy="${c.id}" data-text="${esc(c[s.format])}" title="Copier ${esc(c[s.format])}"></div>
+        <div class="swatch-info">
+          ${['hex', 'rgb', 'hsl'].map(f => `<button class="swatch-code${f === s.format ? ' main' : ''}" data-color-copy="${c.id}" data-format="${f}" data-text="${esc(c[f])}" title="Copier">${esc(c[f])}</button>`).join('')}
+        </div>
+        <button class="btn ghost icon-only swatch-del" data-color-del="${c.id}" title="Retirer">${icon('close')}</button>
+      </div>`).join('') : `<div class="card empty" style="grid-column:1/-1">${icon('drop')}<div>Les couleurs choisies apparaîtront ici.</div></div>`;
+  },
+  renderHotkey() {
+    const el = document.getElementById('color-hotkey');
+    if (el) el.innerHTML = hotkeyCardHTML('color', { title: 'Raccourci', desc: "Ouvre la pipette depuis n'importe quelle app." });
   },
 };
 
@@ -1591,6 +1659,9 @@ const SettingsPage = {
     return `
     ${row('startWithWindows', 'startup', 'Démarrer avec Windows', 'ToolBox se lance en arrière-plan à l\'ouverture de session.')}
     ${row('minimizeToTray', 'tray', 'Réduire dans la barre des tâches', 'Le bouton ✕ cache la fenêtre au lieu de quitter. Clic droit sur l\'icône près de l\'horloge pour quitter.')}
+    <div class="section-title">Performance</div>
+    ${row('lowMemory', 'leaf', 'Économiser la mémoire', 'Quand ToolBox reste caché 3 minutes, l\'interface est libérée (environ 60 Mo). Elle se recharge en une demi-seconde à la réouverture.')}
+    ${row('instantPopup', 'clipboard', 'Fenêtre du presse-papiers instantanée', 'Préparée dès le démarrage pour s\'ouvrir tout de suite (environ 30 Mo de plus).')}
     <div class="section-title">Fonctions</div>
     ${S.order.filter(id => !S.modules[id].alwaysOn).map(id => { const m = S.modules[id]; const def = PAGES.find(p => p.module === id) || {}; return `<div class="setting">${icon(def.icon || 'apps')}
       <div class="text"><div class="title">${esc(m.name)}</div><div class="desc">${esc(m.description)}</div></div>
@@ -1672,7 +1743,7 @@ const Mock = {
     const now = Math.floor(Date.now() / 1000);
     this.state = {
       type: 'state',
-      app: { version: '0.2.0', userName: 'Médéric', enabled: true, startWithWindows: true, minimizeToTray: true, autoUpdate: true, dataDir: 'C:\\Users\\Mederic\\AppData\\Roaming\\ToolBox' },
+      app: { version: '0.4.0', userName: 'Médéric', enabled: true, lowMemory: true, instantPopup: true, startWithWindows: true, minimizeToTray: true, autoUpdate: true, dataDir: 'C:\\Users\\Mederic\\AppData\\Roaming\\ToolBox' },
       update: { current: '0.1.0', status: 'upToDate', latest: 'v0.1.0', notes: '', progress: 0, lastCheck: now - 120 },
       modules: [
         { id: 'monitor', name: 'Moniteur', description: 'Processeur, mémoire, disque et batterie en direct.', enabled: true, alwaysOn: true, running: true, state: {} },
@@ -1692,6 +1763,10 @@ const Mock = {
           langs: [['fra', 'Français', 1130365, true, true], ['eng', 'Anglais', 4113088, true, true], ['spa', 'Espagnol', 2294433, false, false], ['deu', 'Allemand', 1525436, false, false], ['ita', 'Italien', 2701314, false, false], ['por', 'Portugais', 1982756, false, false]]
             .map(([code, name, size, installed, selected]) => ({ code, name, size, installed, selected })),
           history: [{ id: 1, text: 'Chapitre 3 — Les fractions équivalentes\nDeux fractions sont équivalentes si elles représentent la même quantité.', time: now - 90, ms: 640 }] } },
+        { id: 'color', name: 'Pipette', description: "Copie la couleur de n'importe quel pixel de l'écran (HEX, RGB ou HSL).", enabled: true, running: true, state: {
+          hotkeyEnabled: true, hotkeyLabel: 'Ctrl + Alt + C', hotkeyError: '', format: 'hex',
+          history: [['#7CBCFF', 'rgb(124, 188, 255)', 'hsl(211, 100%, 74%)'], ['#1ED760', 'rgb(30, 215, 96)', 'hsl(141, 76%, 48%)'], ['#FF5A36', 'rgb(255, 90, 54)', 'hsl(11, 100%, 61%)']]
+            .map(([hex, rgb, hsl], i) => ({ id: 20 + i, hex, rgb, hsl, time: now - i * 300 })) } },
         { id: 'app_launcher', name: "Raccourcis d'apps", description: 'Lance plusieurs apps d\'un seul clic.', enabled: true, running: true, state: { groups: [
           { id: 'g1', name: 'Devoirs', emoji: '📚', items: ['C:\\Program Files\\Microsoft Office\\WINWORD.EXE', 'https://www.alloprof.qc.ca'] },
           { id: 'g2', name: 'DJ', emoji: '🎧', items: ['C:\\Program Files\\rekordbox\\rekordbox.exe'] }] } },
@@ -1723,7 +1798,8 @@ const Mock = {
     else if (msg.type === 'setSetting') s.app[msg.key] = msg.value;
     else if (msg.type === 'pickFile') return setTimeout(() => receive({ type: 'filePicked', requestId: msg.requestId, path: 'C:\\Program Files\\Exemple\\app.exe' }), 100);
     else if (msg.type === 'moduleAction' && msg.id === 'converter' && msg.action === 'setPref') mod('converter').state[msg.payload.key] = msg.payload.value;
-    else if (msg.type === 'moduleAction' && msg.action === 'setHotkey') mod(msg.id).state.hotkeyLabel = msg.payload.label;
+    else if (msg.type === 'moduleAction' && msg.action === 'setHotkey') mod(msg.id).state[msg.payload.hotkey ? msg.payload.hotkey + '_hotkeyLabel' : 'hotkeyLabel'] = msg.payload.label;
+    else if (msg.type === 'moduleAction' && msg.id === 'color' && msg.action === 'setFormat') mod('color').state.format = msg.payload.value;
     else if (msg.type === 'moduleAction' && msg.id === 'ocr' && msg.action === 'setLangs') mod('ocr').state.langs.forEach(l => { l.selected = msg.payload.list.includes(l.code); });
     else return;
     receive(JSON.parse(JSON.stringify(s)));
