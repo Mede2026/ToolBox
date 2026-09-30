@@ -667,7 +667,14 @@ void App::ShowPopup(bool snippets) {
 
   // Près de la souris, sans dépasser de l'écran.
   const UINT dpi = GetDpiForSystem();
-  const int w = MulDiv(snippets ? 340 : 400, dpi, 96), h = MulDiv(snippets ? 420 : 500, dpi, 96);
+  int w = MulDiv(400, dpi, 96), h = MulDiv(500, dpi, 96);
+  if (snippets) {
+    // Estimation (l'interface envoie ensuite la hauteur exacte) : en-tête, recherche si > 6, lignes, pied.
+    const int n = static_cast<int>(static_cast<Snippets*>(owner)->Count());
+    const int dip = 42 + (n > 6 ? 46 : 0) + std::max(n, 1) * 50 + 8 + 34;
+    w = MulDiv(300, dpi, 96);
+    h = MulDiv(std::min(dip, 460), dpi, 96);
+  }
   POINT pt;
   GetCursorPos(&pt);
   MONITORINFO mi{sizeof(mi)};
@@ -792,6 +799,18 @@ void App::OnPopupMessage(const json& msg) {
     popup_pasting_ = false;
     if (prev_foreground_) SetForegroundWindow(prev_foreground_);
     if (snip->AutoPaste()) SetTimer(popup_hwnd_, 1, 80, nullptr);
+  } else if (type == "popupSize") {
+    // Hauteur exacte des textes rapides (px CSS), sans dépasser l'écran.
+    if (!popup_snippets_ || !popup_hwnd_) return;
+    const UINT dpi = GetDpiForWindow(popup_hwnd_);
+    RECT r;
+    GetWindowRect(popup_hwnd_, &r);
+    MONITORINFO mi{sizeof(mi)};
+    GetMonitorInfoW(MonitorFromWindow(popup_hwnd_, MONITOR_DEFAULTTONEAREST), &mi);
+    const int h = std::min<int>(MulDiv(std::clamp(msg.value("h", 300), 120, 460), dpi, 96) + 2,
+                                mi.rcWork.bottom - mi.rcWork.top);
+    const int y = std::min<int>(r.top, mi.rcWork.bottom - h);
+    SetWindowPos(popup_hwnd_, nullptr, r.left, y, r.right - r.left, h, SWP_NOZORDER | SWP_NOACTIVATE);
   } else if (type == "openMain") {
     HidePopup();
     ShowMainWindow();

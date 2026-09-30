@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Version : la GitHub Action la remplace par celle du tag (ex. v0.2.0 -> 0.2.0).
-set(TOOLBOX_VERSION "0.5.0" CACHE STRING "Version de ToolBox")
+set(TOOLBOX_VERSION "0.5.1" CACHE STRING "Version de ToolBox")
 
 # Dépendances C++ via vcpkg (Tesseract). Le fichier vcpkg.json liste les bibliothèques.
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})

@@ -33,6 +33,7 @@ class Snippets : public Module {
   // Texte de l'élément `id` (vide s'il n'existe pas). Compté dans les statistiques.
   std::wstring Use(const std::string& id);
   bool AutoPaste() const { return auto_paste_; }
+  size_t Count() const { return items_.size(); }
 
  private:
   struct Item {

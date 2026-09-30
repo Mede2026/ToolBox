@@ -1250,11 +1250,11 @@ const Popup = {
         <div class="pop-head">${icon(snip ? 'text' : 'clipboard')}<b>${snip ? 'Textes rapides' : 'Presse-papiers'}</b><span class="spacer"></span>
           <button class="btn ghost icon-only" id="pop-open" title="Ouvrir ToolBox">${icon('apps')}</button>
           <button class="btn ghost icon-only" id="pop-close" title="Fermer (Échap)">${icon('close')}</button></div>
-        <div class="pop-search">${icon('search')}<input type="search" id="pop-q" placeholder="Rechercher…" autocomplete="off"></div>
+        ${snip && (s.items || []).length <= 6 ? '' : `<div class="pop-search">${icon('search')}<input type="search" id="pop-q" placeholder="Rechercher…" autocomplete="off"></div>`}
         <div class="pop-list" id="pop-list"></div>
         <div class="pop-foot">${snip ? '1 à 9 ou clic · ' : '↑ ↓ choisir · '}Entrée ${s.autoPaste ? 'coller' : 'copier'} · Échap fermer</div>
       </div>`;
-    $('#pop-q').addEventListener('input', e => { this.q = e.target.value; this.sel = 0; this.renderList(); });
+    $('#pop-q')?.addEventListener('input', e => { this.q = e.target.value; this.sel = 0; this.renderList(); });
     $('#pop-close').addEventListener('click', () => send({ type: 'popupClose' }));
     $('#pop-open').addEventListener('click', () => send({ type: 'openMain' }));
     $('#pop-list').addEventListener('click', e => {
@@ -1317,10 +1317,20 @@ const Popup = {
   shown(mode) {
     this.mode = mode === 'snippets' ? 'snippets' : 'clipboard';
     this.q = ''; this.sel = 0;
-    if (S.modules && this.built !== this.mode) this.build();
+    if (S.modules && (this.built !== this.mode || this.mode === 'snippets')) this.build();
     const q = $('#pop-q');
     if (q) { q.value = ''; q.focus(); }
     this.renderList();
+    this.fit();
+  },
+  // Textes rapides : la fenêtre prend juste la hauteur de la liste.
+  fit() {
+    const pop = $('.pop'), list = $('#pop-list');
+    if (this.mode !== 'snippets' || !pop || !list) return;
+    pop.style.height = 'auto'; list.style.flex = 'none';
+    const h = Math.ceil(pop.getBoundingClientRect().height);
+    pop.style.height = ''; list.style.flex = '';
+    send({ type: 'popupSize', h });
   },
 };
 
