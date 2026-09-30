@@ -131,18 +131,28 @@ void Stats::LoadConfig(const json& cfg) {
   for (const auto& d : cfg.value("days", json::array())) {
     if (!d.is_object()) continue;
     Day day{d.value("date", ""), d.value("active", 0LL)};
-    for (const auto& [k, v] : d.value("apps", json::object()).items()) day.apps[k] = v.get<long long>();
-    for (const auto& [k, v] : d.value("events", json::object()).items()) day.events[k] = v.get<long long>();
+    // Copies locales : itérer sur le résultat temporaire de value() lirait de la mémoire déjà libérée.
+    const json apps = d.value("apps", json::object());
+    const json events = d.value("events", json::object());
+    for (const auto& [k, v] : apps.items()) {
+      if (v.is_number()) day.apps[k] = v.get<long long>();
+    }
+    for (const auto& [k, v] : events.items()) {
+      if (v.is_number()) day.events[k] = v.get<long long>();
+    }
     days_.push_back(std::move(day));
   }
   hours_.clear();
   for (const auto& h : cfg.value("hours", json::array())) {
-    if (h.is_array() && h.size() == 4) {
+    if (h.is_array() && h.size() == 4 && h[0].is_number() && h[1].is_number() && h[2].is_number() && h[3].is_number()) {
       hours_.push_back(Hour{h[0].get<long long>(), h[1].get<double>(), h[2].get<double>(), h[3].get<int>()});
     }
   }
   totals_.clear();
-  for (const auto& [k, v] : cfg.value("totals", json::object()).items()) totals_[k] = v.get<long long>();
+  const json totals = cfg.value("totals", json::object());
+  for (const auto& [k, v] : totals.items()) {
+    if (v.is_number()) totals_[k] = v.get<long long>();
+  }
   since_ = cfg.value("since", 0LL);
 }
 

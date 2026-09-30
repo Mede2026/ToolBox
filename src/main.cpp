@@ -132,10 +132,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdline, int) {
 
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   int rc = 0;
-  {
+  try {
     App app(instance, start_hidden);
     rc = app.Run();
     ReleaseSingleInstance();  // une nouvelle ToolBox peut démarrer pendant qu'on nettoie
+  } catch (const std::exception& e) {
+    ReportCrash(e.what());  // message clair au lieu d'un simple code d'exception
+    return 1;
   }
   CoUninitialize();
   CloseHandle(g_mutex);

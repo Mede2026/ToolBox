@@ -104,7 +104,15 @@ void App::CreateModules() {
   modules_.push_back(std::make_unique<AppLauncher>());
   modules_.push_back(std::make_unique<PlaceLauncher>(push));
 
-  for (auto& m : modules_) m->LoadConfig(settings_.Module(m->Id()));
+  for (auto& m : modules_) {
+    try {
+      m->LoadConfig(settings_.Module(m->Id()));
+    } catch (const std::exception& e) {  // réglages illisibles : cette fonction repart à zéro
+      util::LogError("réglages de « " + m->Id() + " » illisibles, remis à zéro : " + e.what());
+      settings_.Module(m->Id()) = nlohmann::json::object();
+      m->LoadConfig(nlohmann::json::object());
+    }
+  }
 
   // Les modules signalent leurs actions (texte lu, copie…) aux Statistiques.
   Module::event_sink = [this](const std::string& event) {
