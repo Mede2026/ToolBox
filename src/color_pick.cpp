@@ -1,4 +1,5 @@
 #include "color_pick.h"
+#include "util.h"
 
 #include <windowsx.h>
 
@@ -51,9 +52,9 @@ ColorPicker::ColorPicker(HINSTANCE instance, Done done) : done_(std::move(done))
 
   hwnd_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kClass, L"Pipette", WS_POPUP, vx_, vy_, vw_, vh_, nullptr,
                           nullptr, instance, this);
+  shown_at_ = GetTickCount64();
   ShowWindow(hwnd_, SW_SHOW);
-  SetForegroundWindow(hwnd_);
-  SetFocus(hwnd_);
+  util::ForceForeground(hwnd_);
 }
 
 ColorPicker::~ColorPicker() {
@@ -208,7 +209,8 @@ LRESULT ColorPicker::Handle(UINT msg, WPARAM wparam, LPARAM lparam) {
       return 0;
     }
     case WM_ACTIVATE:
-      if (LOWORD(wparam) == WA_INACTIVE) Finish(false);
+      if (LOWORD(wparam) != WA_INACTIVE) was_active_ = true;
+      else if (was_active_ && GetTickCount64() - shown_at_ > 600) Finish(false);
       return 0;
     case WM_CLOSE:
       Finish(false);

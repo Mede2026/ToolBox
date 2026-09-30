@@ -43,4 +43,6 @@ class ScreenSelector {
   bool dragging_ = false;
   POINT start_{}, cur_{};
   bool finished_ = false;
+  bool was_active_ = false;  // a eu le focus au moins une fois
+  ULONGLONG shown_at_ = 0;   // ignore une perte de focus juste à l'ouverture
 };

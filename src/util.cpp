@@ -142,6 +142,29 @@ bool SetClipboardText(HWND owner, const std::wstring& text) {
   return ok;
 }
 
+void ForceForeground(HWND hwnd) {
+  if (!hwnd) return;
+  SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+  // Windows bloque SetForegroundWindow si une autre app a le focus : on se branche sur son fil d'entrée.
+  const DWORD me = GetCurrentThreadId();
+  HWND fg = GetForegroundWindow();
+  const DWORD fg_thread = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
+  const bool attached = fg_thread && fg_thread != me && AttachThreadInput(me, fg_thread, TRUE);
+  if (!SetForegroundWindow(hwnd) && !(GetAsyncKeyState(VK_MENU) & 0x8000)) {
+    // Dernier recours : un appui sur Alt autorise le changement de premier plan.
+    INPUT in[2]{};
+    in[0].type = in[1].type = INPUT_KEYBOARD;
+    in[0].ki.wVk = in[1].ki.wVk = VK_MENU;
+    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(2, in, sizeof(INPUT));
+    SetForegroundWindow(hwnd);
+  }
+  BringWindowToTop(hwnd);
+  SetActiveWindow(hwnd);
+  SetFocus(hwnd);
+  if (attached) AttachThreadInput(me, fg_thread, FALSE);
+}
+
 std::wstring UserFirstName() {
   wchar_t buf[256];
   ULONG size = 256;

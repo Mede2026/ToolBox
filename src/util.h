@@ -33,6 +33,9 @@ void LogError(const std::string& what);
 // Met du texte dans le presse-papiers.
 bool SetClipboardText(HWND owner, const std::wstring& text);
 
+// Met une fenêtre au premier plan même si ToolBox n'y est pas (ouverte par raccourci clavier).
+void ForceForeground(HWND hwnd);
+
 // Prénom de l'utilisateur Windows (ex. « Médéric »), pour l'accueil.
 std::wstring UserFirstName();
 

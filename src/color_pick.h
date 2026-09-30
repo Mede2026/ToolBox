@@ -36,4 +36,6 @@ class ColorPicker {
   HFONT font_ = nullptr;
   POINT cur_{};  // position de la souris (coordonnées de la fenêtre)
   bool finished_ = false;
+  bool was_active_ = false;  // a eu le focus au moins une fois
+  ULONGLONG shown_at_ = 0;   // ignore une perte de focus juste à l'ouverture
 };

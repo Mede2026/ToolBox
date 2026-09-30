@@ -655,7 +655,7 @@ void App::ShowClipboardPopup() {
   const int x = std::max<int>(wa.left, std::min<int>(pt.x - w / 2, wa.right - w));
   const int y = std::max<int>(wa.top, std::min<int>(pt.y - MulDiv(40, dpi, 96), wa.bottom - h));
   SetWindowPos(popup_hwnd_, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW);
-  SetForegroundWindow(popup_hwnd_);
+  util::ForceForeground(popup_hwnd_);
   if (popup_controller_) {
     popup_controller_->put_IsVisible(TRUE);
     popup_controller_->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);

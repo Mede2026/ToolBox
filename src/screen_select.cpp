@@ -1,4 +1,5 @@
 #include "screen_select.h"
+#include "util.h"
 
 #include <windowsx.h>
 
@@ -68,9 +69,9 @@ ScreenSelector::ScreenSelector(HINSTANCE instance, std::wstring hint, Done done)
 
   hwnd_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kClass, L"Sélection OCR", WS_POPUP, vx_, vy_, vw_, vh_,
                           nullptr, nullptr, instance, this);
+  shown_at_ = GetTickCount64();
   ShowWindow(hwnd_, SW_SHOW);
-  SetForegroundWindow(hwnd_);
-  SetFocus(hwnd_);
+  util::ForceForeground(hwnd_);
 }
 
 ScreenSelector::~ScreenSelector() {
@@ -235,7 +236,9 @@ LRESULT ScreenSelector::Handle(UINT msg, WPARAM wparam, LPARAM lparam) {
       if (wparam == VK_ESCAPE) Finish(false);
       return 0;
     case WM_ACTIVATE:
-      if (LOWORD(wparam) == WA_INACTIVE && !dragging_) Finish(false);  // Alt+Tab ailleurs = annuler
+      // Alt+Tab ailleurs = annuler, mais seulement si la sélection avait vraiment eu le focus.
+      if (LOWORD(wparam) != WA_INACTIVE) was_active_ = true;
+      else if (was_active_ && GetTickCount64() - shown_at_ > 600 && !dragging_) Finish(false);
       return 0;
     case WM_CLOSE:
       Finish(false);
